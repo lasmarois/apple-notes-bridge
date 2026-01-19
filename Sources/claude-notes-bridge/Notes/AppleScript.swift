@@ -241,6 +241,47 @@ class NotesAppleScript {
         _ = try runAppleScript(script)
     }
 
+    // MARK: - Attachment Operations
+
+    /// Get the file path for an attachment
+    /// - Parameter id: The attachment ID (x-coredata URL)
+    /// - Returns: POSIX file path to the attachment
+    func getAttachmentPath(id: String) throws -> String {
+        // Note: We need to get 'contents' from the properties record because
+        // 'contents of attachment' returns the attachment reference, not the file path
+        let script = """
+        tell application "Notes"
+            set att to attachment id "\(escapeForAppleScript(id))"
+            set props to properties of att
+            set filePath to contents of props
+            return POSIX path of filePath
+        end tell
+        """
+
+        let output = try runAppleScript(script)
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Add an attachment to an existing note
+    /// - Parameters:
+    ///   - noteId: The note ID (x-coredata URL or UUID)
+    ///   - filePath: POSIX path to the file to attach
+    /// - Returns: The created attachment's ID
+    func addAttachment(noteId: String, filePath: String) throws -> String {
+        let resolvedNoteId = try resolveNoteId(noteId)
+
+        let script = """
+        tell application "Notes"
+            set theNote to note id "\(resolvedNoteId)"
+            set newAtt to make new attachment at end of attachments of theNote with data (POSIX file "\(escapeForAppleScript(filePath))")
+            return id of newAtt
+        end tell
+        """
+
+        let output = try runAppleScript(script)
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: - Query Helpers
 
     /// Find a note's x-coredata ID by UUID (searches via AppleScript)

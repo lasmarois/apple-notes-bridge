@@ -19,6 +19,18 @@ struct NoteContent {
     let folder: String?
     let createdAt: Date?
     let modifiedAt: Date?
+    var attachments: [Attachment] = []
+}
+
+/// Attachment metadata
+struct Attachment {
+    let id: String           // x-coredata://...ICAttachment/p123
+    let identifier: String   // UUID
+    let name: String?        // filename (e.g., "IMG_0473.jpg")
+    let typeUTI: String      // e.g., "public.jpeg", "com.adobe.pdf"
+    let fileSize: Int64      // bytes
+    let createdAt: Date?
+    let modifiedAt: Date?
 }
 
 // MARK: - Errors
@@ -33,6 +45,7 @@ enum NotesError: LocalizedError {
     case missingParameter(String)
     case encodingError
     case appleScriptError(String)
+    case attachmentNotFound(String)
 
     var errorDescription: String? {
         switch self {
@@ -54,6 +67,8 @@ enum NotesError: LocalizedError {
             return "Failed to encode response"
         case .appleScriptError(let message):
             return "AppleScript error: \(message)"
+        case .attachmentNotFound(let id):
+            return "Attachment not found: \(id)"
         }
     }
 }

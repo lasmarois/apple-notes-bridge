@@ -75,14 +75,31 @@ The original goal-1 research incorrectly stated AppleScript couldn't update/dele
 
 ---
 
-## Horizon 3: Production (Far-term)
+## Horizon 3: Rich Content & Polish (Far-term)
 
-*Goal: Polish for real-world use.*
+*Goal: Full Notes.app feature support and production readiness.*
 
-### M6: Attachments `[exploratory]`
-- [ ] Read attachment metadata
-- [ ] Extract attachment content
-- [ ] Create notes with attachments
+### M6: Attachments `[committed]` ✅
+- [x] Read attachment metadata from DB
+- [x] Get attachment file path via AppleScript
+- [x] Add attachments to notes via AppleScript
+- [x] Tools: `get_attachment`, `add_attachment`
+
+### M6.5: Rich Text Support `[likely]`
+- [ ] Test/fix typography: bold, italic, underline, strikethrough
+- [ ] Test/fix headings and lists (bullet, numbered, checklist)
+- [ ] Test/fix fonts and font sizes
+- [ ] Test/fix text colors and highlights
+- [ ] Test/fix emojis (read and write)
+- [ ] Test/fix links (URLs, note links)
+- [ ] Test/fix hashtags/tags
+- [ ] Test/fix tables (if supported)
+
+### M6.6: Integration Testing `[likely]`
+- [ ] End-to-end test suite
+- [ ] Round-trip tests (create → read → update → verify)
+- [ ] Edge cases: special characters, unicode, large notes
+- [ ] iCloud sync verification
 
 ### M7: Production Readiness `[exploratory]`
 - [ ] Code signing & notarization
@@ -118,3 +135,5 @@ The original goal-1 research incorrectly stated AppleScript couldn't update/dele
 | 2026-01-18 | **PIVOT:** M3 approach changed from DB writes to AppleScript. Direct DB writes create invisible notes (missing CloudKit metadata). AppleScript confirmed to support full CRUD (corrects goal-1 error). See goal-4/findings.md |
 | 2026-01-18 | **M3 + M4 complete:** Full CRUD via hybrid architecture (DB reads + AppleScript writes). Tools: create_note, update_note, delete_note |
 | 2026-01-19 | **M5 complete:** Folder operations. Tools: create_folder, move_note, rename_folder, delete_folder |
+| 2026-01-19 | Added M6.5 (Rich Text Support) and M6.6 (Integration Testing) milestones between M6 and M7 |
+| 2026-01-19 | **M6 complete:** Attachments. Tools: get_attachment, add_attachment. read_note now includes attachment metadata |

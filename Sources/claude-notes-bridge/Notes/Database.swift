@@ -127,7 +127,10 @@ class NotesDatabase {
             }
         }
 
-        return NoteContent(
+        // Fetch attachments for this note
+        let attachments = try fetchAttachments(forNotePK: pk)
+
+        var noteContent = NoteContent(
             id: id,
             title: title,
             content: content,
@@ -135,6 +138,9 @@ class NotesDatabase {
             createdAt: created,
             modifiedAt: modified
         )
+        noteContent.attachments = attachments
+
+        return noteContent
     }
 
     /// Search notes by content
@@ -186,6 +192,112 @@ class NotesDatabase {
         }
 
         return notes
+    }
+
+    // MARK: - Attachment Operations
+
+    /// Fetch attachments for a note by its Z_PK
+    private func fetchAttachments(forNotePK notePK: Int64) throws -> [Attachment] {
+        let query = """
+            SELECT
+                a.Z_PK as pk,
+                a.ZIDENTIFIER as identifier,
+                a.ZTITLE as name,
+                a.ZTYPEUTI as typeUTI,
+                a.ZFILESIZE as fileSize,
+                a.ZCREATIONDATE as created,
+                a.ZMODIFICATIONDATE as modified
+            FROM ZICCLOUDSYNCINGOBJECT a
+            WHERE a.Z_ENT = 5 AND a.ZNOTE = ?
+            ORDER BY a.ZCREATIONDATE
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, notePK)
+
+        var attachments: [Attachment] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let pk = sqlite3_column_int64(statement, 0)
+            let identifier = columnString(statement, 1) ?? ""
+            let name = columnString(statement, 2)
+            let typeUTI = columnString(statement, 3) ?? "public.data"
+            let fileSize = sqlite3_column_int64(statement, 4)
+            let created = columnDate(statement, 5)
+            let modified = columnDate(statement, 6)
+
+            // Construct the x-coredata ID format
+            let id = "x-coredata://E80D5A9D-1939-4C46-B3D4-E0EF27C98CE8/ICAttachment/p\(pk)"
+
+            attachments.append(Attachment(
+                id: id,
+                identifier: identifier,
+                name: name,
+                typeUTI: typeUTI,
+                fileSize: fileSize,
+                createdAt: created,
+                modifiedAt: modified
+            ))
+        }
+
+        return attachments
+    }
+
+    /// Get attachment metadata by ID
+    func getAttachment(id: String) throws -> Attachment {
+        try ensureOpen()
+
+        // Extract PK from x-coredata URL (e.g., "x-coredata://...ICAttachment/p123" -> 123)
+        guard let pkString = id.components(separatedBy: "/p").last,
+              let pk = Int64(pkString) else {
+            throw NotesError.attachmentNotFound(id)
+        }
+
+        let query = """
+            SELECT
+                a.Z_PK as pk,
+                a.ZIDENTIFIER as identifier,
+                a.ZTITLE as name,
+                a.ZTYPEUTI as typeUTI,
+                a.ZFILESIZE as fileSize,
+                a.ZCREATIONDATE as created,
+                a.ZMODIFICATIONDATE as modified
+            FROM ZICCLOUDSYNCINGOBJECT a
+            WHERE a.Z_ENT = 5 AND a.Z_PK = ?
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, pk)
+
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw NotesError.attachmentNotFound(id)
+        }
+
+        let identifier = columnString(statement, 1) ?? ""
+        let name = columnString(statement, 2)
+        let typeUTI = columnString(statement, 3) ?? "public.data"
+        let fileSize = sqlite3_column_int64(statement, 4)
+        let created = columnDate(statement, 5)
+        let modified = columnDate(statement, 6)
+
+        return Attachment(
+            id: id,
+            identifier: identifier,
+            name: name,
+            typeUTI: typeUTI,
+            fileSize: fileSize,
+            createdAt: created,
+            modifiedAt: modified
+        )
     }
 
     // MARK: - Write Operations

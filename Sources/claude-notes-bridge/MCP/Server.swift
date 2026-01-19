@@ -257,6 +257,38 @@ actor MCPServer {
                     ],
                     "required": ["name"]
                 ]
+            ],
+            [
+                "name": "get_attachment",
+                "description": "Get attachment metadata and file path. Use this to retrieve the file path for an attachment.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "id": [
+                            "type": "string",
+                            "description": "The attachment ID (x-coredata URL from read_note response)"
+                        ]
+                    ],
+                    "required": ["id"]
+                ]
+            ],
+            [
+                "name": "add_attachment",
+                "description": "Add an attachment to an existing note",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "note_id": [
+                            "type": "string",
+                            "description": "The note ID (UUID or x-coredata URL)"
+                        ],
+                        "file_path": [
+                            "type": "string",
+                            "description": "Path to the file to attach (POSIX path)"
+                        ]
+                    ],
+                    "required": ["note_id", "file_path"]
+                ]
             ]
         ]
 
@@ -361,6 +393,30 @@ actor MCPServer {
                 }
                 try notesAS.deleteFolder(name: name)
                 result = ["name": name, "deleted": true]
+            case "get_attachment":
+                guard let id = arguments["id"] as? String else {
+                    throw NotesError.missingParameter("id")
+                }
+                let attachment = try notesDB.getAttachment(id: id)
+                // Get the file path via AppleScript
+                let filePath = try notesAS.getAttachmentPath(id: id)
+                result = [
+                    "id": attachment.id,
+                    "identifier": attachment.identifier,
+                    "name": attachment.name ?? "Unknown",
+                    "type": attachment.typeUTI,
+                    "size": attachment.fileSize,
+                    "path": filePath
+                ] as [String: Any]
+            case "add_attachment":
+                guard let noteId = arguments["note_id"] as? String else {
+                    throw NotesError.missingParameter("note_id")
+                }
+                guard let filePath = arguments["file_path"] as? String else {
+                    throw NotesError.missingParameter("file_path")
+                }
+                let attachmentId = try notesAS.addAttachment(noteId: noteId, filePath: filePath)
+                result = ["note_id": noteId, "attachment_id": attachmentId, "added": true]
             default:
                 return JSONRPCResponse(
                     jsonrpc: "2.0",
@@ -406,7 +462,7 @@ actor MCPServer {
                 """
             }.joined(separator: "\n\n")
         } else if let note = result as? NoteContent {
-            return """
+            var output = """
             # \(note.title)
 
             \(note.content)
@@ -417,9 +473,47 @@ actor MCPServer {
             Created: \(note.createdAt?.description ?? "Unknown")
             Modified: \(note.modifiedAt?.description ?? "Unknown")
             """
+
+            if !note.attachments.isEmpty {
+                output += "\n\nAttachments (\(note.attachments.count)):"
+                for att in note.attachments {
+                    let name = att.name ?? "Unnamed"
+                    let size = ByteCountFormatter.string(fromByteCount: att.fileSize, countStyle: .file)
+                    output += "\n  📎 \(name) (\(att.typeUTI), \(size))"
+                    output += "\n     ID: \(att.id)"
+                }
+            }
+
+            return output
         } else if let actionResult = result as? [String: Any] {
             // Handle various action results
-            if let id = actionResult["id"] as? String {
+            // Check for attachment results first (they have id but also path or added)
+            if let path = actionResult["path"] as? String {
+                // Get attachment result
+                let name = actionResult["name"] as? String ?? "Unknown"
+                let type = actionResult["type"] as? String ?? "Unknown"
+                let size = actionResult["size"] as? Int64 ?? 0
+                let sizeStr = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+                let id = actionResult["id"] as? String ?? "Unknown"
+                return """
+                📎 Attachment: \(name)
+
+                Type: \(type)
+                Size: \(sizeStr)
+                Path: \(path)
+                ID: \(id)
+                """
+            } else if actionResult["added"] as? Bool == true,
+                      let attachmentId = actionResult["attachment_id"] as? String {
+                // Add attachment result
+                let noteId = actionResult["note_id"] as? String ?? "Unknown"
+                return """
+                ✅ Attachment added successfully!
+
+                Note ID: \(noteId)
+                Attachment ID: \(attachmentId)
+                """
+            } else if let id = actionResult["id"] as? String {
                 // Note operations
                 if let title = actionResult["title"] as? String {
                     // Create note result
