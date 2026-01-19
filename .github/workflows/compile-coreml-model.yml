@@ -1,0 +1,64 @@
+name: Compile Core ML Model
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    paths:
+      - 'Models/*.mlpackage/**'  # Trigger when mlpackage changes
+
+jobs:
+  compile:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
+
+      - name: Compile MiniLM mlpackage to mlmodelc
+        run: |
+          echo "Compiling Core ML model..."
+          xcrun coremlcompiler compile \
+            Models/all-MiniLM-L6-v2.mlpackage \
+            Models/
+
+          echo "Compilation complete. Contents of Models/:"
+          ls -la Models/
+
+          # Verify the compiled model exists
+          if [ -d "Models/all-MiniLM-L6-v2.mlmodelc" ]; then
+            echo "✅ Model compiled successfully!"
+            du -sh Models/all-MiniLM-L6-v2.mlmodelc
+          else
+            echo "❌ Compilation failed - mlmodelc not found"
+            exit 1
+          fi
+
+      - name: Commit compiled model
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Add the compiled model
+          git add Models/all-MiniLM-L6-v2.mlmodelc
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: compile MiniLM Core ML model
+
+            Auto-compiled from all-MiniLM-L6-v2.mlpackage using xcrun coremlcompiler"
+            git push
+          fi
+
+      - name: Upload compiled model as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiniLM-compiled-model
+          path: Models/all-MiniLM-L6-v2.mlmodelc
+          retention-days: 90
