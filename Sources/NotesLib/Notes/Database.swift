@@ -68,6 +68,29 @@ public class NotesDatabase {
         return notes
     }
 
+    /// Get the latest modification date across all notes (for staleness detection)
+    public func getLatestModificationDate() throws -> Date? {
+        try ensureOpen()
+
+        let query = """
+            SELECT MAX(ZMODIFICATIONDATE1) as latest
+            FROM ZICCLOUDSYNCINGOBJECT
+            WHERE ZTITLE1 IS NOT NULL
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        if sqlite3_step(statement) == SQLITE_ROW {
+            return columnDate(statement, 0)
+        }
+
+        return nil
+    }
+
     /// Read a single note's full content
     public func readNote(id: String) throws -> NoteContent {
         try ensureOpen()

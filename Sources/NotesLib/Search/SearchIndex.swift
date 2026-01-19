@@ -244,6 +244,77 @@ public class SearchIndex {
         }
     }
 
+    /// Check if the index is stale (notes modified since last build)
+    public var isStale: Bool {
+        guard let lastBuild = lastBuildDate else {
+            return true  // No build date means stale
+        }
+
+        // Get the latest modification date from Notes DB
+        if let latestMod = try? notesDB.getLatestModificationDate() {
+            return latestMod > lastBuild
+        }
+
+        return false
+    }
+
+    /// Get staleness info for display
+    public var stalenessInfo: (isStale: Bool, lastBuild: Date?, noteCount: Int, message: String) {
+        let lastBuild = lastBuildDate
+        let count = indexedCount
+        let stale = isStale
+
+        let message: String
+        if lastBuild == nil {
+            message = "Index not built. Run build_search_index first."
+        } else if stale {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .full
+            let timeAgo = formatter.localizedString(for: lastBuild!, relativeTo: Date())
+            message = "Index may be stale (built \(timeAgo)). Rebuilding in background..."
+        } else {
+            message = "Index is up to date."
+        }
+
+        return (stale, lastBuild, count, message)
+    }
+
+    /// Rebuild index in background (non-blocking)
+    private var isRebuilding = false
+
+    public func rebuildInBackground() {
+        guard !isRebuilding else { return }
+        isRebuilding = true
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            defer { self?.isRebuilding = false }
+            _ = try? self?.buildIndex()
+        }
+    }
+
+    /// Search with auto-rebuild if stale
+    /// Returns (results, wasStale, isRebuilding)
+    public func searchWithAutoRebuild(query: String, limit: Int = 20) throws -> (results: [(noteId: String, snippet: String)], wasStale: Bool, isRebuilding: Bool) {
+        let wasStale = isStale
+
+        // If no index at all, build synchronously first time
+        if !isIndexed {
+            try buildIndex()
+            let results = try search(query: query, limit: limit)
+            return (results, true, false)
+        }
+
+        // Search with current index
+        let results = try search(query: query, limit: limit)
+
+        // If stale, trigger background rebuild for next search
+        if wasStale && !isRebuilding {
+            rebuildInBackground()
+        }
+
+        return (results, wasStale, isRebuilding)
+    }
+
     deinit {
         close()
     }

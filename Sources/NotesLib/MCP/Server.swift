@@ -586,26 +586,40 @@ public actor MCPServer {
                 }
                 let limit = arguments["limit"] as? Int ?? 20
 
-                if !searchIndex.isIndexed {
-                    result = ["error": "Search index not built. Run build_search_index first.", "indexed": false] as [String: Any]
-                } else {
-                    let ftsResults = try searchIndex.search(query: query, limit: limit)
-                    // Fetch full note metadata for each result
-                    var notes: [Note] = []
-                    for (noteId, snippet) in ftsResults {
-                        if let note = try? notesDB.listNotes(limit: 10000).first(where: { $0.id == noteId }) {
-                            notes.append(Note(
-                                id: note.id,
-                                title: note.title,
-                                folder: note.folder,
-                                createdAt: note.createdAt,
-                                modifiedAt: note.modifiedAt,
-                                matchSnippet: snippet.isEmpty ? nil : snippet
-                            ))
-                        }
+                // Use auto-rebuild search (builds index if missing, rebuilds in background if stale)
+                let (ftsResults, wasStale, isRebuilding) = try searchIndex.searchWithAutoRebuild(query: query, limit: limit)
+
+                // Fetch full note metadata for each result
+                var notes: [Note] = []
+                for (noteId, snippet) in ftsResults {
+                    if let note = try? notesDB.listNotes(limit: 10000).first(where: { $0.id == noteId }) {
+                        notes.append(Note(
+                            id: note.id,
+                            title: note.title,
+                            folder: note.folder,
+                            createdAt: note.createdAt,
+                            modifiedAt: note.modifiedAt,
+                            matchSnippet: snippet.isEmpty ? nil : snippet
+                        ))
                     }
-                    result = ["notes": notes, "count": notes.count, "indexed_notes": searchIndex.indexedCount] as [String: Any]
                 }
+
+                var resultDict: [String: Any] = [
+                    "notes": notes,
+                    "count": notes.count,
+                    "indexed_notes": searchIndex.indexedCount
+                ]
+
+                // Add staleness warning if applicable
+                if wasStale {
+                    if isRebuilding {
+                        resultDict["warning"] = "⚠️ Index was stale, rebuilding in background. Results may be incomplete."
+                    } else {
+                        resultDict["warning"] = "⚠️ Index was stale and has been rebuilt."
+                    }
+                }
+
+                result = resultDict
             // TODO: Re-enable when SimilaritySearchKit Core ML issue is fixed
             // case "semantic_search":
             //     guard let query = arguments["query"] as? String else {
@@ -688,6 +702,11 @@ public actor MCPServer {
             // FTS search metadata
             if let indexedNotes = searchResult["indexed_notes"] as? Int {
                 output += "\n\n📊 FTS Index: \(indexedNotes) notes indexed"
+            }
+
+            // Staleness warning
+            if let warning = searchResult["warning"] as? String {
+                output += "\n\(warning)"
             }
 
             return output
