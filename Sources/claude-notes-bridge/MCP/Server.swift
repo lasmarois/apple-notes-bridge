@@ -131,7 +131,7 @@ actor MCPServer {
             ],
             [
                 "name": "create_note",
-                "description": "Create a new note in Apple Notes",
+                "description": "Create a new note in Apple Notes. Supports markdown: # headers, **bold**, *italic*, ~~strike~~, `code` (colored), ```blocks```, - lists, > quotes.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -141,7 +141,7 @@ actor MCPServer {
                         ],
                         "body": [
                             "type": "string",
-                            "description": "The note body content"
+                            "description": "The note body content (supports markdown)"
                         ],
                         "folder": [
                             "type": "string",
@@ -393,7 +393,7 @@ actor MCPServer {
                     throw NotesError.missingParameter("body")
                 }
                 let folder = arguments["folder"] as? String
-                // Use AppleScript for reliable CloudKit-compatible creation
+                // Use AppleScript for reliable CloudKit-compatible creation with markdown→HTML conversion
                 let noteResult = try notesAS.createNote(title: title, body: body, folder: folder)
                 result = ["id": noteResult.id, "title": title, "folder": folder ?? "Notes"]
             case "update_note":

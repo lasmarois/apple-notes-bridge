@@ -25,8 +25,8 @@ class NotesAppleScript {
         let folderName = folder ?? "Notes"
         let escapedFolder = escapeForAppleScript(folderName)
 
-        // Build HTML body with title as h1, process markdown code in body
-        let htmlBody = "<div><h1>\(escapeHTML(title))</h1></div><div>\(processBody(body))</div>"
+        // Build HTML body - Notes.app automatically shows title, so don't duplicate it
+        let htmlBody = "<div>\(processBody(body))</div>"
         let escapedHtmlBody = escapeForAppleScript(htmlBody)
 
         let script: String
@@ -63,7 +63,7 @@ class NotesAppleScript {
         for (index, note) in notes.enumerated() {
             let varName = "note\(index)"
             let folder = note.folder ?? "Notes"
-            let htmlBody = "<div><h1>\(escapeHTML(note.title))</h1></div><div>\(processBody(note.body))</div>"
+            let htmlBody = "<div>\(processBody(note.body))</div>"
 
             scriptParts.append("""
                 set \(varName) to make new note at folder "\(escapeForAppleScript(folder))" with properties {name:"\(escapeForAppleScript(note.title))", body:"\(escapeForAppleScript(htmlBody))"}
@@ -105,40 +105,29 @@ class NotesAppleScript {
 
         if let title = title, let body = body {
             // Both title and body provided
-            let htmlBody = "<div><h1>\(escapeHTML(title))</h1></div><div>\(processBody(body))</div>"
+            let htmlBody = "<div>\(processBody(body))</div>"
             script = """
             tell application "Notes"
                 set theNote to note id "\(noteId)"
+                set name of theNote to "\(escapeForAppleScript(title))"
                 set body of theNote to "\(escapeForAppleScript(htmlBody))"
             end tell
             """
         } else if let title = title {
-            // Only title - get current body and rebuild
+            // Only title - just update the name
             script = """
             tell application "Notes"
                 set theNote to note id "\(noteId)"
-                set currentBody to plaintext of theNote
-                -- Remove first line (old title) from body
-                set AppleScript's text item delimiters to {return, linefeed, return & linefeed}
-                set bodyLines to text items of currentBody
-                if (count of bodyLines) > 1 then
-                    set bodyContent to items 2 thru -1 of bodyLines as text
-                else
-                    set bodyContent to ""
-                end if
-                set AppleScript's text item delimiters to ""
-                set newBody to "<div><h1>\(escapeForAppleScript(escapeHTML(title)))</h1></div><div>" & bodyContent & "</div>"
-                set body of theNote to newBody
+                set name of theNote to "\(escapeForAppleScript(title))"
             end tell
             """
         } else if let body = body {
             // Only body - preserve current title
+            let htmlBody = "<div>\(processBody(body))</div>"
             script = """
             tell application "Notes"
                 set theNote to note id "\(noteId)"
-                set currentTitle to name of theNote
-                set newBody to "<div><h1>" & currentTitle & "</h1></div><div>\(escapeForAppleScript(processBody(body)))</div>"
-                set body of theNote to newBody
+                set body of theNote to "\(escapeForAppleScript(htmlBody))"
             end tell
             """
         } else {

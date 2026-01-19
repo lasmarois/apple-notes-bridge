@@ -75,16 +75,17 @@ class NoteEncoder {
     private func buildNoteMessage(text: String) -> Data {
         var data = Data()
 
+        // Process markdown: get clean text and style info
+        let (cleanText, styleRuns) = processMarkdownForProtobuf(text)
+
         // Field 2: note_text (string)
-        let textData = text.data(using: .utf8) ?? Data()
+        let textData = cleanText.data(using: .utf8) ?? Data()
         data.append(contentsOf: encodeTag(fieldNumber: 2, wireType: 2))
         data.append(contentsOf: encodeVarint(UInt64(textData.count)))
         data.append(textData)
 
         // Field 5: attribute_run (repeated)
-        // We need at least one AttributeRun covering the entire text
-        let attributeRuns = buildAttributeRuns(for: text)
-        for run in attributeRuns {
+        for run in styleRuns {
             data.append(contentsOf: encodeTag(fieldNumber: 5, wireType: 2))
             data.append(contentsOf: encodeVarint(UInt64(run.count)))
             data.append(run)
@@ -93,45 +94,101 @@ class NoteEncoder {
         return data
     }
 
-    /// Build AttributeRun messages for the text
-    /// Minimal: one run covering the title (first line) and one for the body
-    private func buildAttributeRuns(for text: String) -> [Data] {
+    /// Process markdown text: strip syntax and return clean text + attribute runs
+    /// Returns: (cleanText, attributeRuns)
+    private func processMarkdownForProtobuf(_ text: String) -> (String, [Data]) {
+        var cleanLines: [String] = []
         var runs: [Data] = []
 
-        // Split into lines to identify title vs body
         let lines = text.components(separatedBy: "\n")
 
         if lines.isEmpty {
-            return [buildAttributeRun(length: 0, paragraphStyle: nil)]
+            return ("", [buildAttributeRun(length: 0, paragraphStyle: nil)])
         }
 
-        var currentOffset = 0
+        var inCodeBlock = false
 
         for (index, line) in lines.enumerated() {
-            let lineLength = line.utf8.count
-            let isLastLine = index == lines.count - 1
+            var cleanLine = line
+            var styleType: NoteStyleType = .body
 
-            // Include the newline character in length (except for last line)
-            let totalLength = isLastLine ? lineLength : lineLength + 1
-
-            if totalLength > 0 {
-                // First line (title) gets style type 1, others get style type 0
-                let styleType = index == 0 ? 1 : 0
-                runs.append(buildAttributeRun(
-                    length: totalLength,
-                    paragraphStyle: buildParagraphStyle(styleType: styleType)
-                ))
+            // Check for code block markers
+            if line.hasPrefix("```") {
+                inCodeBlock = !inCodeBlock
+                cleanLine = "" // Remove ``` marker line
+                styleType = .monospaced
+            } else if inCodeBlock {
+                styleType = .monospaced
+                // Keep line as-is for code
+            }
+            // First line is always title
+            else if index == 0 {
+                styleType = .title
+                // Strip # prefix if present
+                if line.hasPrefix("# ") {
+                    cleanLine = String(line.dropFirst(2))
+                }
+            }
+            // Markdown headers
+            else if line.hasPrefix("### ") {
+                styleType = .subheading
+                cleanLine = String(line.dropFirst(4))
+            } else if line.hasPrefix("## ") {
+                styleType = .heading
+                cleanLine = String(line.dropFirst(3))
+            } else if line.hasPrefix("# ") {
+                styleType = .title
+                cleanLine = String(line.dropFirst(2))
+            }
+            // Checkbox items
+            else if line.hasPrefix("- [ ] ") {
+                styleType = .checkbox
+                cleanLine = String(line.dropFirst(6))
+            } else if line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ") {
+                styleType = .checkboxChecked
+                cleanLine = String(line.dropFirst(6))
+            }
+            // Bullet points - convert to regular text (Notes has its own bullet handling)
+            else if line.hasPrefix("- ") {
+                cleanLine = String(line.dropFirst(2))
+            } else if line.hasPrefix("* ") {
+                cleanLine = String(line.dropFirst(2))
             }
 
-            currentOffset += totalLength
+            cleanLines.append(cleanLine)
+
+            // Calculate length including newline (except for last line)
+            let isLastLine = index == lines.count - 1
+            let lineLength = cleanLine.utf8.count
+            let totalLength = isLastLine ? lineLength : lineLength + 1
+
+            if totalLength > 0 || cleanLine.isEmpty {
+                runs.append(buildAttributeRun(
+                    length: max(totalLength, isLastLine ? 0 : 1),
+                    paragraphStyle: buildParagraphStyle(styleType: styleType.rawValue)
+                ))
+            }
         }
 
-        // If we ended up with no runs, add a minimal one
+        // Filter out empty runs for empty ``` lines but keep the structure
+        let cleanText = cleanLines.joined(separator: "\n")
+
         if runs.isEmpty {
-            runs.append(buildAttributeRun(length: text.utf8.count, paragraphStyle: nil))
+            runs.append(buildAttributeRun(length: cleanText.utf8.count, paragraphStyle: nil))
         }
 
-        return runs
+        return (cleanText, runs)
+    }
+
+    /// Style types for Notes.app
+    private enum NoteStyleType: Int {
+        case body = 0
+        case title = 1
+        case heading = 2
+        case subheading = 3
+        case monospaced = 4
+        case checkbox = 100
+        case checkboxChecked = 101
     }
 
     /// Build a single AttributeRun
