@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "claude-notes-bridge",
     platforms: [
-        .macOS(.v12)
+        .macOS(.v13)  // Required for Core ML semantic search
     ],
     products: [
         .executable(name: "claude-notes-bridge", targets: ["claude-notes-bridge"]),
@@ -23,14 +23,16 @@ let package = Package(
             name: "NotesLib",
             dependencies: [
                 .product(name: "SwiftProtobuf", package: "swift-protobuf")
-                // TODO: Re-enable when Core ML model generation is fixed
-                // .product(name: "SimilaritySearchKit", package: "similarity-search-kit"),
-                // .product(name: "SimilaritySearchKitMiniLMAll", package: "similarity-search-kit")
             ],
             path: "Sources/NotesLib",
-            exclude: ["Search/SemanticSearch.swift"],
+            resources: [
+                .copy("Search/Resources/all-MiniLM-L6-v2.mlmodelc"),
+                .process("Search/Resources/bert_tokenizer_vocab.txt")
+            ],
             linkerSettings: [
-                .linkedLibrary("sqlite3")
+                .linkedLibrary("sqlite3"),
+                .linkedFramework("CoreML"),
+                .linkedFramework("Accelerate")
             ]
         ),
         // Executable that uses the library

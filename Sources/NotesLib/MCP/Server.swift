@@ -5,15 +5,14 @@ public actor MCPServer {
     private let notesDB: NotesDatabase
     private let notesAS: NotesAppleScript
     private let searchIndex: SearchIndex
-    // TODO: Re-enable when SimilaritySearchKit Core ML issue is fixed
-    // private let semanticSearch: SemanticSearch
+    private let semanticSearch: SemanticSearch
     private var initialized = false
 
     public init() {
         self.notesDB = NotesDatabase()
         self.notesAS = NotesAppleScript()
         self.searchIndex = SearchIndex(notesDB: notesDB)
-        // self.semanticSearch = SemanticSearch(notesDB: notesDB)
+        self.semanticSearch = SemanticSearch(notesDB: notesDB)
     }
 
     /// Main run loop - reads JSON-RPC requests from stdin, writes responses to stdout
@@ -383,13 +382,25 @@ public actor MCPServer {
                     ],
                     "required": ["query"]
                 ]
+            ],
+            [
+                "name": "semantic_search",
+                "description": "Search notes by meaning using AI embeddings (MiniLM). Finds semantically similar notes even without exact keyword matches. Example: 'cooking recipes' finds notes about food preparation. First call builds the index (~10s for 2000 notes).",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "query": [
+                            "type": "string",
+                            "description": "Natural language query describing what you're looking for"
+                        ],
+                        "limit": [
+                            "type": "integer",
+                            "description": "Maximum number of results (default 10)"
+                        ]
+                    ],
+                    "required": ["query"]
+                ]
             ]
-            // TODO: Re-enable when SimilaritySearchKit Core ML issue is fixed
-            // [
-            //     "name": "semantic_search",
-            //     "description": "Search notes by meaning using AI embeddings (MiniLM)...",
-            //     "inputSchema": [...]
-            // ]
         ]
 
         return JSONRPCResponse(
@@ -620,14 +631,13 @@ public actor MCPServer {
                 }
 
                 result = resultDict
-            // TODO: Re-enable when SimilaritySearchKit Core ML issue is fixed
-            // case "semantic_search":
-            //     guard let query = arguments["query"] as? String else {
-            //         throw NotesError.missingParameter("query")
-            //     }
-            //     let limit = arguments["limit"] as? Int ?? 10
-            //     let searchResults = try await semanticSearch.search(query: query, limit: limit)
-            //     result = ["results": searchResults, "count": searchResults.count, "indexed_notes": await semanticSearch.indexedCount] as [String: Any]
+            case "semantic_search":
+                guard let query = arguments["query"] as? String else {
+                    throw NotesError.missingParameter("query")
+                }
+                let limit = arguments["limit"] as? Int ?? 10
+                let searchResults = try await semanticSearch.search(query: query, limit: limit)
+                result = ["results": searchResults, "count": searchResults.count, "indexed_notes": await semanticSearch.indexedCount] as [String: Any]
             default:
                 return JSONRPCResponse(
                     jsonrpc: "2.0",
@@ -757,12 +767,21 @@ public actor MCPServer {
             return output
         } else if let actionResult = result as? [String: Any] {
             // Handle various action results
-            // TODO: Re-enable when SimilaritySearchKit Core ML issue is fixed
-            // if let semanticResults = actionResult["results"] as? [SemanticSearchResult] {
-            //     ... semantic search result formatting ...
-            // }
+            // Check for semantic search results
+            if let semanticResults = actionResult["results"] as? [SemanticSearchResult] {
+                let count = actionResult["count"] as? Int ?? semanticResults.count
+                let indexed = actionResult["indexed_notes"] as? Int ?? 0
+                var output = "Found \(count) semantically similar note(s) (index: \(indexed) notes):\n"
+                for result in semanticResults {
+                    let score = String(format: "%.2f", result.score)
+                    output += "\n📝 \(result.title) (score: \(score))"
+                    output += "\n   Folder: \(result.folder ?? "Notes")"
+                    output += "\n   ID: \(result.noteId)\n"
+                }
+                return output
+            }
             // Check for hashtag list result
-            if let hashtags = actionResult["hashtags"] as? [String] {
+            else if let hashtags = actionResult["hashtags"] as? [String] {
                 let count = actionResult["count"] as? Int ?? hashtags.count
                 let tagList = hashtags.joined(separator: "  ")
                 return "Found \(count) hashtags:\n\n\(tagList)"
