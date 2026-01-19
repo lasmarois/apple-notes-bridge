@@ -15,22 +15,22 @@
 
 *Goal: Prove the approach works end-to-end.*
 
-### M1: Read-Only MVP `[committed]`
-- [ ] Swift package structure
-- [ ] SQLite access to NoteStore.sqlite
-- [ ] Protobuf decoding (note content)
-- [ ] List notes, read single note
-- [ ] Full Disk Access permission handling
+### M1: Read-Only MVP `[committed]` ✅
+- [x] Swift package structure
+- [x] SQLite access to NoteStore.sqlite
+- [x] Protobuf decoding (note content)
+- [x] List notes, read single note
+- [x] Full Disk Access permission handling
 
-### M2: MCP Server Integration `[committed]`
-- [ ] MCP protocol over stdio (JSON-RPC)
-- [ ] Tool definitions: `list_notes`, `read_note`, `search_notes`
-- [ ] Integration with Claude Code
-- [ ] Basic error handling
+### M2: MCP Server Integration `[committed]` ✅
+- [x] MCP protocol over stdio (JSON-RPC)
+- [x] Tool definitions: `list_notes`, `read_note`, `search_notes`
+- [x] Integration with Claude Code
+- [x] Basic error handling
 
-### Open Questions (H1)
-- How does Notes.app lock the database? Can we read while it's open?
-- What's the minimal protobuf subset needed for text notes?
+### Open Questions (H1) — ANSWERED
+- ~~How does Notes.app lock the database?~~ → Can read while Notes.app is open (read-only mode)
+- ~~What's the minimal protobuf subset needed?~~ → Just NoteStoreProto.Document.Note.note_text
 
 ---
 
@@ -105,3 +105,4 @@
 | Date | Change |
 |------|--------|
 | 2026-01-18 | Initial roadmap based on goal-1 research |
+| 2026-01-18 | M1 + M2 complete: Read-only MCP server working |
