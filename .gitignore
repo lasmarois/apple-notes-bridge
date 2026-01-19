@@ -1,0 +1,8 @@
+# macOS
+.DS_Store
+
+# Local Claude config
+CLAUDE.local.md
+
+# Planning files that may contain sensitive info
+*.local.md
