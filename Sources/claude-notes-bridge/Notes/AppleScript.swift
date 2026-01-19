@@ -25,8 +25,8 @@ class NotesAppleScript {
         let folderName = folder ?? "Notes"
         let escapedFolder = escapeForAppleScript(folderName)
 
-        // Build HTML body with title as h1
-        let htmlBody = "<div><h1>\(escapeHTML(title))</h1></div><div>\(escapeHTML(body))</div>"
+        // Build HTML body with title as h1, process markdown code in body
+        let htmlBody = "<div><h1>\(escapeHTML(title))</h1></div><div>\(processBody(body))</div>"
         let escapedHtmlBody = escapeForAppleScript(htmlBody)
 
         let script: String
@@ -63,7 +63,7 @@ class NotesAppleScript {
         for (index, note) in notes.enumerated() {
             let varName = "note\(index)"
             let folder = note.folder ?? "Notes"
-            let htmlBody = "<div><h1>\(escapeHTML(note.title))</h1></div><div>\(escapeHTML(note.body))</div>"
+            let htmlBody = "<div><h1>\(escapeHTML(note.title))</h1></div><div>\(processBody(note.body))</div>"
 
             scriptParts.append("""
                 set \(varName) to make new note at folder "\(escapeForAppleScript(folder))" with properties {name:"\(escapeForAppleScript(note.title))", body:"\(escapeForAppleScript(htmlBody))"}
@@ -105,7 +105,7 @@ class NotesAppleScript {
 
         if let title = title, let body = body {
             // Both title and body provided
-            let htmlBody = "<div><h1>\(escapeHTML(title))</h1></div><div>\(escapeHTML(body))</div>"
+            let htmlBody = "<div><h1>\(escapeHTML(title))</h1></div><div>\(processBody(body))</div>"
             script = """
             tell application "Notes"
                 set theNote to note id "\(noteId)"
@@ -137,7 +137,7 @@ class NotesAppleScript {
             tell application "Notes"
                 set theNote to note id "\(noteId)"
                 set currentTitle to name of theNote
-                set newBody to "<div><h1>" & currentTitle & "</h1></div><div>\(escapeForAppleScript(escapeHTML(body)))</div>"
+                set newBody to "<div><h1>" & currentTitle & "</h1></div><div>\(escapeForAppleScript(processBody(body)))</div>"
                 set body of theNote to newBody
             end tell
             """
@@ -388,6 +388,182 @@ class NotesAppleScript {
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "\n", with: "<br>")
+    }
+
+    /// Convert markdown to HTML
+    /// Handles: code blocks, inline code, bold, italic, strikethrough, headers, lists
+    private func processMarkdown(_ string: String) -> String {
+        var result = string
+
+        // 1. First, handle fenced code blocks: ```lang\ncode\n```
+        let codeBlockPattern = "```(?:\\w*)?\\n([\\s\\S]*?)```"
+        if let regex = try? NSRegularExpression(pattern: codeBlockPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            let matches = regex.matches(in: result, options: [], range: range)
+
+            for match in matches.reversed() {
+                guard let fullRange = Range(match.range, in: result),
+                      let codeRange = Range(match.range(at: 1), in: result) else {
+                    continue
+                }
+
+                let code = String(result[codeRange])
+                let escapedCode = code
+                    .replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;")
+                    .replacingOccurrences(of: ">", with: "&gt;")
+                    .replacingOccurrences(of: "\n", with: "<br>")
+
+                // Use placeholder to protect from further processing
+                let replacement = "⟦CODEBLOCK⟧\(escapedCode)⟦/CODEBLOCK⟧"
+                result.replaceSubrange(fullRange, with: replacement)
+            }
+        }
+
+        // 2. Handle inline code: `code`
+        let inlinePattern = "`([^`]+)`"
+        if let regex = try? NSRegularExpression(pattern: inlinePattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            let matches = regex.matches(in: result, options: [], range: range)
+
+            for match in matches.reversed() {
+                guard let fullRange = Range(match.range, in: result),
+                      let codeRange = Range(match.range(at: 1), in: result) else {
+                    continue
+                }
+
+                let code = String(result[codeRange])
+                let escapedCode = code
+                    .replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;")
+                    .replacingOccurrences(of: ">", with: "&gt;")
+
+                let replacement = "⟦CODE⟧\(escapedCode)⟦/CODE⟧"
+                result.replaceSubrange(fullRange, with: replacement)
+            }
+        }
+
+        // 3. Now escape HTML in the rest of the text
+        // Split by our placeholders, escape non-code parts
+        var escaped = ""
+        var remaining = result
+
+        while !remaining.isEmpty {
+            // Find the earliest placeholder
+            let codeBlockRange = remaining.range(of: "⟦CODEBLOCK⟧")
+            let codeRange = remaining.range(of: "⟦CODE⟧")
+
+            // Determine which comes first
+            let nextPlaceholder: (range: Range<String.Index>, isBlock: Bool)?
+            if let cbr = codeBlockRange, let cr = codeRange {
+                nextPlaceholder = cbr.lowerBound < cr.lowerBound ? (cbr, true) : (cr, false)
+            } else if let cbr = codeBlockRange {
+                nextPlaceholder = (cbr, true)
+            } else if let cr = codeRange {
+                nextPlaceholder = (cr, false)
+            } else {
+                nextPlaceholder = nil
+            }
+
+            guard let (startRange, isBlock) = nextPlaceholder else {
+                // No more placeholders, escape the rest
+                escaped += escapeHTMLOnly(remaining)
+                break
+            }
+
+            // Escape text before the placeholder
+            let before = String(remaining[..<startRange.lowerBound])
+            escaped += escapeHTMLOnly(before)
+
+            let afterStart = String(remaining[startRange.upperBound...])
+            let endTag = isBlock ? "⟦/CODEBLOCK⟧" : "⟦/CODE⟧"
+
+            if let endRange = afterStart.range(of: endTag) {
+                let codeContent = String(afterStart[..<endRange.lowerBound])
+                // Use Menlo font with a code-like color (dark red/maroon for inline, just Menlo for blocks)
+                let fontTag = isBlock ? "<font face=\"Menlo\">" : "<font face=\"Menlo\" color=\"#c7254e\">"
+                escaped += "\(fontTag)\(codeContent)</font>"
+                remaining = String(afterStart[endRange.upperBound...])
+            } else {
+                // No closing tag found, escape the rest
+                escaped += escapeHTMLOnly(remaining)
+                break
+            }
+        }
+
+        result = escaped
+
+        // 4. Process markdown formatting (on escaped text, avoiding code blocks)
+        // Bold: **text** or __text__
+        result = applyPattern(result, pattern: "\\*\\*(.+?)\\*\\*", replacement: "<b>$1</b>")
+        result = applyPattern(result, pattern: "__(.+?)__", replacement: "<b>$1</b>")
+
+        // Italic: *text* or _text_ (but not inside words for underscore)
+        result = applyPattern(result, pattern: "(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)", replacement: "<i>$1</i>")
+        result = applyPattern(result, pattern: "(?<![\\w])_(?!_)(.+?)(?<!_)_(?![\\w])", replacement: "<i>$1</i>")
+
+        // Strikethrough: ~~text~~
+        result = applyPattern(result, pattern: "~~(.+?)~~", replacement: "<strike>$1</strike>")
+
+        // 5. Handle line-based markdown (headers, lists)
+        // Process line by line
+        var lines = result.components(separatedBy: "\n")
+        for i in 0..<lines.count {
+            var line = lines[i]
+
+            // Headers: # ## ###
+            if line.hasPrefix("### ") {
+                line = "<b>\(String(line.dropFirst(4)))</b>"
+            } else if line.hasPrefix("## ") {
+                line = "<h2>\(String(line.dropFirst(3)))</h2>"
+            } else if line.hasPrefix("# ") {
+                line = "<h1>\(String(line.dropFirst(2)))</h1>"
+            }
+            // Blockquotes: > text
+            else if line.hasPrefix("&gt; ") {
+                // > was escaped to &gt;, style as quote with left border effect using color
+                line = "<font color=\"#666666\">▎ \(String(line.dropFirst(5)))</font>"
+            } else if line.hasPrefix("&gt;") && line.count > 4 {
+                line = "<font color=\"#666666\">▎ \(String(line.dropFirst(4)))</font>"
+            }
+            // Unordered lists: - or *
+            else if line.hasPrefix("- ") {
+                line = "• \(String(line.dropFirst(2)))"
+            } else if line.hasPrefix("* ") {
+                line = "• \(String(line.dropFirst(2)))"
+            }
+            // Ordered lists: 1. 2. etc (keep as-is, just ensure formatting)
+
+            lines[i] = line
+        }
+
+        result = lines.joined(separator: "<br>")
+
+        return result
+    }
+
+    /// Apply regex pattern and replacement
+    private func applyPattern(_ string: String, pattern: String, replacement: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return string
+        }
+
+        let range = NSRange(string.startIndex..., in: string)
+        return regex.stringByReplacingMatches(in: string, options: [], range: range, withTemplate: replacement)
+    }
+
+    /// Escape HTML special characters only (no newline conversion)
+    private func escapeHTMLOnly(_ string: String) -> String {
+        return string
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    /// Process body text with full markdown conversion
+    private func processBody(_ string: String) -> String {
+        return processMarkdown(string)
     }
 
     private func parseNoteId(_ output: String) throws -> NoteResult {
