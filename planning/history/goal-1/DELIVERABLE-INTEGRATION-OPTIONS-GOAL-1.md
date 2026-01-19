@@ -15,18 +15,24 @@
 
 ## Why Database-Only
 
+> **⚠️ CORRECTION (goal-4, 2026-01-18):** This table was WRONG about AppleScript limitations.
+> AppleScript DOES support update and delete operations. See `goal-4/findings.md` for details.
+> The recommended architecture is now: **Database for reads, AppleScript for writes.**
+
 | Capability | AppleScript | Database |
 |------------|:-----------:|:--------:|
 | Read notes | ✅ | ✅ |
-| Create notes | ✅ | ✅ |
-| **Update notes** | ❌ | ✅ |
-| **Delete notes** | ❌ | ✅ |
+| Create notes | ✅ | ⚠️ (invisible without CloudKit) |
+| **Update notes** | ✅ *(corrected)* | ⚠️ (requires CloudKit metadata) |
+| **Delete notes** | ✅ *(corrected)* | ⚠️ (may leave orphans) |
 | Folders | ✅ | ✅ |
-| **Attachments** | ❌ | ✅ |
+| **Attachments** | ⚠️ (limited) | ✅ |
 | **Rich metadata** | ❌ | ✅ |
-| iCloud sync compat | ✅ (native) | ⚠️ (requires care) |
+| iCloud sync compat | ✅ (native) | ❌ (cannot forge CloudKit metadata) |
 
-The database approach unlocks full CRUD + attachments that AppleScript cannot provide.
+~~The database approach unlocks full CRUD + attachments that AppleScript cannot provide.~~
+
+**Revised approach:** Hybrid architecture — AppleScript for writes (handles CloudKit), Database for reads (faster, richer metadata).
 
 ---
 

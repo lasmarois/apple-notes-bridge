@@ -38,31 +38,34 @@
 
 *Goal: Enable Claude to create and modify notes.*
 
-### M3: Create Notes `[likely]`
-- [ ] Protobuf encoding (construct valid note)
-- [ ] Insert into ZICNOTEDATA + ZICCLOUDSYNCINGOBJECT
-- [ ] Test with "On My Mac" folder (no iCloud)
-- [ ] Tool: `create_note`
+### M3: Create Notes `[committed]` ✅ — PIVOTED TO APPLESCRIPT
+- [x] ~~Protobuf encoding~~ → Not needed (AppleScript handles it)
+- [x] ~~Direct DB writes~~ → **Failed** (invisible without CloudKit metadata)
+- [x] **Pivot:** AppleScript for writes (see goal-4 findings)
+- [x] Tool: `create_note` via AppleScript
 
-### M4: iCloud Sync Compatibility `[likely]`
-- [ ] Study CloudKit metadata preservation
-- [ ] Test create with iCloud-synced folder
-- [ ] Handle sync conflicts gracefully
+### M4: Update & Delete `[committed]` ✅
+- [x] Tool: `update_note` via AppleScript
+- [x] Tool: `delete_note` via AppleScript
+- [ ] Folder operations (create, move) → deferred to M5
 
-### M5: Update & Delete `[exploratory]`
-- [ ] Update existing note content
-- [ ] Delete notes safely
-- [ ] Folder operations (create, move)
-- [ ] Tools: `update_note`, `delete_note`, `move_note`
+### Open Questions (H2) — ANSWERED
+- ~~Can we write to iCloud-synced notes without breaking sync?~~ → **YES, via AppleScript** (handles CloudKit automatically)
+- ~~What CloudKit fields must be preserved/updated?~~ → **N/A** (AppleScript manages this)
+- ~~Does Notes.app detect external DB changes?~~ → **No** (DB-created notes are invisible)
 
-### Open Questions (H2)
-- Can we write to iCloud-synced notes without breaking sync?
-- What CloudKit fields must be preserved/updated?
-- Does Notes.app detect external DB changes and refresh?
+### Key Finding: AppleScript Supports Full CRUD
+**Reference:** goal-4/findings.md "CRITICAL DISCOVERY" section
 
-### Pivot Points (H2)
-- **If iCloud writes fail:** Fall back to "On My Mac" only, or explore AppleScript hybrid
-- **If sync breaks:** May need to trigger Notes.app refresh somehow
+The original goal-1 research incorrectly stated AppleScript couldn't update/delete notes.
+**Verified capabilities:**
+- Create: `make new note with properties {...}`
+- Update: `set body of note id (noteID) to newBody`
+- Delete: `delete note`
+
+**Architecture decision:**
+- **Reads:** Database (fast, rich metadata)
+- **Writes:** AppleScript (handles CloudKit, guaranteed visibility)
 
 ---
 
@@ -106,3 +109,5 @@
 |------|--------|
 | 2026-01-18 | Initial roadmap based on goal-1 research |
 | 2026-01-18 | M1 + M2 complete: Read-only MCP server working |
+| 2026-01-18 | **PIVOT:** M3 approach changed from DB writes to AppleScript. Direct DB writes create invisible notes (missing CloudKit metadata). AppleScript confirmed to support full CRUD (corrects goal-1 error). See goal-4/findings.md |
+| 2026-01-18 | **M3 + M4 complete:** Full CRUD via hybrid architecture (DB reads + AppleScript writes). Tools: create_note, update_note, delete_note |

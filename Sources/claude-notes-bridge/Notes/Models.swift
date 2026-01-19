@@ -28,9 +28,11 @@ enum NotesError: LocalizedError {
     case cannotOpenDatabase(String)
     case queryFailed(String)
     case noteNotFound(String)
+    case folderNotFound(String)
     case decodingFailed(String)
     case missingParameter(String)
     case encodingError
+    case appleScriptError(String)
 
     var errorDescription: String? {
         switch self {
@@ -42,12 +44,16 @@ enum NotesError: LocalizedError {
             return "Database query failed: \(reason)"
         case .noteNotFound(let id):
             return "Note not found: \(id)"
+        case .folderNotFound(let name):
+            return "Folder not found: \(name)"
         case .decodingFailed(let reason):
             return "Failed to decode note content: \(reason)"
         case .missingParameter(let name):
             return "Missing required parameter: \(name)"
         case .encodingError:
             return "Failed to encode response"
+        case .appleScriptError(let message):
+            return "AppleScript error: \(message)"
         }
     }
 }

@@ -3,10 +3,12 @@ import Foundation
 /// MCP Server implementation using JSON-RPC over stdio
 actor MCPServer {
     private let notesDB: NotesDatabase
+    private let notesAS: NotesAppleScript
     private var initialized = false
 
     init() {
         self.notesDB = NotesDatabase()
+        self.notesAS = NotesAppleScript()
     }
 
     /// Main run loop - reads JSON-RPC requests from stdin, writes responses to stdout
@@ -121,6 +123,72 @@ actor MCPServer {
                     ],
                     "required": ["query"]
                 ]
+            ],
+            [
+                "name": "create_note",
+                "description": "Create a new note in Apple Notes",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "title": [
+                            "type": "string",
+                            "description": "The note title"
+                        ],
+                        "body": [
+                            "type": "string",
+                            "description": "The note body content"
+                        ],
+                        "folder": [
+                            "type": "string",
+                            "description": "Optional folder name (defaults to 'Notes')"
+                        ]
+                    ],
+                    "required": ["title", "body"]
+                ]
+            ],
+            [
+                "name": "list_folders",
+                "description": "List all available folders in Apple Notes",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [:]
+                ]
+            ],
+            [
+                "name": "update_note",
+                "description": "Update an existing note's title and/or body",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "id": [
+                            "type": "string",
+                            "description": "The note ID (UUID or x-coredata URL)"
+                        ],
+                        "title": [
+                            "type": "string",
+                            "description": "New title (optional)"
+                        ],
+                        "body": [
+                            "type": "string",
+                            "description": "New body content (optional)"
+                        ]
+                    ],
+                    "required": ["id"]
+                ]
+            ],
+            [
+                "name": "delete_note",
+                "description": "Delete a note (moves to Recently Deleted)",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "id": [
+                            "type": "string",
+                            "description": "The note ID (UUID or x-coredata URL)"
+                        ]
+                    ],
+                    "required": ["id"]
+                ]
             ]
         ]
 
@@ -163,6 +231,37 @@ actor MCPServer {
                 }
                 let limit = arguments["limit"] as? Int ?? 20
                 result = try notesDB.searchNotes(query: query, limit: limit)
+            case "create_note":
+                guard let title = arguments["title"] as? String else {
+                    throw NotesError.missingParameter("title")
+                }
+                guard let body = arguments["body"] as? String else {
+                    throw NotesError.missingParameter("body")
+                }
+                let folder = arguments["folder"] as? String
+                // Use AppleScript for reliable CloudKit-compatible creation
+                let noteResult = try notesAS.createNote(title: title, body: body, folder: folder)
+                result = ["id": noteResult.id, "title": title, "folder": folder ?? "Notes"]
+            case "update_note":
+                guard let id = arguments["id"] as? String else {
+                    throw NotesError.missingParameter("id")
+                }
+                let title = arguments["title"] as? String
+                let body = arguments["body"] as? String
+                if title == nil && body == nil {
+                    throw NotesError.missingParameter("title or body")
+                }
+                try notesAS.updateNote(id: id, title: title, body: body)
+                result = ["id": id, "updated": true]
+            case "delete_note":
+                guard let id = arguments["id"] as? String else {
+                    throw NotesError.missingParameter("id")
+                }
+                try notesAS.deleteNote(id: id)
+                result = ["id": id, "deleted": true]
+            case "list_folders":
+                let folders = try notesDB.listFolders()
+                result = folders.map { ["name": $0.name] }
             default:
                 return JSONRPCResponse(
                     jsonrpc: "2.0",
@@ -219,6 +318,40 @@ actor MCPServer {
             Created: \(note.createdAt?.description ?? "Unknown")
             Modified: \(note.modifiedAt?.description ?? "Unknown")
             """
+        } else if let actionResult = result as? [String: Any],
+                  let id = actionResult["id"] as? String {
+            // Handle create, update, delete results
+            if let title = actionResult["title"] as? String {
+                // Create result
+                let folder = actionResult["folder"] as? String ?? "Notes"
+                return """
+                ✅ Note created successfully!
+
+                Title: \(title)
+                ID: \(id)
+                Folder: \(folder)
+                """
+            } else if actionResult["updated"] as? Bool == true {
+                // Update result
+                return """
+                ✅ Note updated successfully!
+
+                ID: \(id)
+                """
+            } else if actionResult["deleted"] as? Bool == true {
+                // Delete result
+                return """
+                ✅ Note deleted successfully!
+
+                ID: \(id)
+                Note moved to Recently Deleted.
+                """
+            } else {
+                return String(describing: result)
+            }
+        } else if let folders = result as? [[String: String]] {
+            let folderList = folders.map { "📁 \($0["name"] ?? "Unknown")" }.joined(separator: "\n")
+            return "Available folders:\n\n\(folderList)"
         } else {
             return String(describing: result)
         }

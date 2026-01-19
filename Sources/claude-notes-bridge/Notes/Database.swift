@@ -5,6 +5,8 @@ import SQLite3
 class NotesDatabase {
     private var db: OpaquePointer?
     private let decoder = NoteDecoder()
+    private let encoder = NoteEncoder()
+    private var isReadWrite = false
 
     init() {
         // Database is opened lazily on first query
@@ -184,6 +186,292 @@ class NotesDatabase {
         }
 
         return notes
+    }
+
+    // MARK: - Write Operations
+
+    /// Create a new note in the database
+    /// - Parameters:
+    ///   - title: The note title
+    ///   - body: The note body content
+    ///   - folderName: Optional folder name (uses "Notes" if nil)
+    /// - Returns: The UUID of the created note
+    func createNote(title: String, body: String, folderName: String? = nil) throws -> String {
+        try ensureOpenReadWrite()
+
+        // Build the full note text (title + newlines + body)
+        let fullText = body.isEmpty ? title : "\(title)\n\n\(body)"
+
+        // Generate snippet (first line of body or empty)
+        let snippet = body.components(separatedBy: "\n").first ?? ""
+
+        // Find the folder
+        let folderPK = try findFolder(named: folderName ?? "Notes")
+
+        // Find the account (use iCloud account)
+        let accountPK = try findAccount()
+
+        // Generate new UUID
+        let identifier = UUID().uuidString
+
+        // Get current timestamp (Core Data format: seconds since 2001-01-01)
+        let timestamp = Date().timeIntervalSinceReferenceDate
+
+        // Encode the note content
+        let encodedData = try encoder.encode(fullText)
+
+        // Begin transaction
+        try executeSQL("BEGIN TRANSACTION")
+
+        do {
+            // Allocate Z_PK for note (entity 3 = ICCloudSyncingObject)
+            let notePK = try allocateNextPK(forEntity: 3)
+
+            // Allocate Z_PK for note data (entity 19 = ICNoteData)
+            let noteDataPK = try allocateNextPK(forEntity: 19)
+
+            // Insert into ZICNOTEDATA first
+            try insertNoteData(pk: noteDataPK, notePK: notePK, data: encodedData)
+
+            // Insert into ZICCLOUDSYNCINGOBJECT
+            try insertNote(
+                pk: notePK,
+                identifier: identifier,
+                title: title,
+                snippet: snippet,
+                folderPK: folderPK,
+                accountPK: accountPK,
+                noteDataPK: noteDataPK,
+                timestamp: timestamp
+            )
+
+            // Commit transaction
+            try executeSQL("COMMIT")
+
+            return identifier
+        } catch {
+            // Rollback on error
+            try? executeSQL("ROLLBACK")
+            throw error
+        }
+    }
+
+    /// List available folders
+    func listFolders() throws -> [(pk: Int64, name: String)] {
+        try ensureOpen()
+
+        let query = """
+            SELECT Z_PK, ZTITLE2
+            FROM ZICCLOUDSYNCINGOBJECT
+            WHERE Z_ENT = 15 AND ZTITLE2 IS NOT NULL
+            ORDER BY ZTITLE2
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var folders: [(pk: Int64, name: String)] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let pk = sqlite3_column_int64(statement, 0)
+            let name = columnString(statement, 1) ?? ""
+            folders.append((pk: pk, name: name))
+        }
+
+        return folders
+    }
+
+    // MARK: - Private Write Helpers
+
+    private func ensureOpenReadWrite() throws {
+        // If already open read-write, we're good
+        if db != nil && isReadWrite { return }
+
+        // Close existing read-only connection
+        if let existingDb = db {
+            sqlite3_close(existingDb)
+            db = nil
+        }
+
+        let path = Permissions.notesDatabasePath
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw NotesError.databaseNotFound
+        }
+
+        // Open read-write
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+            let error = db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+            throw NotesError.cannotOpenDatabase(error)
+        }
+
+        isReadWrite = true
+    }
+
+    private func findFolder(named name: String) throws -> Int64 {
+        let query = """
+            SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT
+            WHERE Z_ENT = 15 AND ZTITLE2 = ?
+            LIMIT 1
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, (name as NSString).utf8String, -1, SQLITE_TRANSIENT)
+
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw NotesError.folderNotFound(name)
+        }
+
+        return sqlite3_column_int64(statement, 0)
+    }
+
+    private func findAccount() throws -> Int64 {
+        // Find the first (typically iCloud) account
+        let query = """
+            SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT
+            WHERE Z_ENT = 14
+            LIMIT 1
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw NotesError.queryFailed("No account found")
+        }
+
+        return sqlite3_column_int64(statement, 0)
+    }
+
+    private func allocateNextPK(forEntity entity: Int) throws -> Int64 {
+        // Read current max
+        let selectQuery = "SELECT Z_MAX FROM Z_PRIMARYKEY WHERE Z_ENT = ?"
+
+        var selectStatement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, selectQuery, -1, &selectStatement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(selectStatement) }
+
+        sqlite3_bind_int(selectStatement, 1, Int32(entity))
+
+        guard sqlite3_step(selectStatement) == SQLITE_ROW else {
+            throw NotesError.queryFailed("Entity \(entity) not found in Z_PRIMARYKEY")
+        }
+
+        let currentMax = sqlite3_column_int64(selectStatement, 0)
+        let newPK = currentMax + 1
+
+        // Update Z_MAX
+        let updateQuery = "UPDATE Z_PRIMARYKEY SET Z_MAX = ? WHERE Z_ENT = ?"
+
+        var updateStatement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, updateQuery, -1, &updateStatement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(updateStatement) }
+
+        sqlite3_bind_int64(updateStatement, 1, newPK)
+        sqlite3_bind_int(updateStatement, 2, Int32(entity))
+
+        guard sqlite3_step(updateStatement) == SQLITE_DONE else {
+            throw NotesError.queryFailed("Failed to update Z_MAX: \(String(cString: sqlite3_errmsg(db)))")
+        }
+
+        return newPK
+    }
+
+    private func insertNoteData(pk: Int64, notePK: Int64, data: Data) throws {
+        let query = """
+            INSERT INTO ZICNOTEDATA (Z_PK, Z_ENT, Z_OPT, ZNOTE, ZDATA)
+            VALUES (?, 19, 1, ?, ?)
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, pk)
+        sqlite3_bind_int64(statement, 2, notePK)
+
+        data.withUnsafeBytes { ptr in
+            sqlite3_bind_blob(statement, 3, ptr.baseAddress, Int32(data.count), nil)
+        }
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw NotesError.queryFailed("Failed to insert note data: \(String(cString: sqlite3_errmsg(db)))")
+        }
+    }
+
+    private func insertNote(
+        pk: Int64,
+        identifier: String,
+        title: String,
+        snippet: String,
+        folderPK: Int64,
+        accountPK: Int64,
+        noteDataPK: Int64,
+        timestamp: Double
+    ) throws {
+        let query = """
+            INSERT INTO ZICCLOUDSYNCINGOBJECT (
+                Z_PK, Z_ENT, Z_OPT,
+                ZACCOUNT7, ZFOLDER, ZNOTEDATA,
+                ZIDENTIFIER, ZTITLE1, ZSNIPPET,
+                ZCREATIONDATE3, ZMODIFICATIONDATE1,
+                ZHASCHECKLIST, ZHASCHECKLISTINPROGRESS, ZHASEMPHASIS,
+                ZHASSYSTEMTEXTATTACHMENTS, ZISPINNED, ZISSYSTEMPAPER,
+                ZPAPERSTYLETYPE, ZPREFERREDBACKGROUNDTYPE
+            ) VALUES (
+                ?, 12, 1,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                0, 0, 0,
+                0, 0, 0,
+                0, 0
+            )
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+        sqlite3_bind_int64(statement, 1, pk)
+        sqlite3_bind_int64(statement, 2, accountPK)
+        sqlite3_bind_int64(statement, 3, folderPK)
+        sqlite3_bind_int64(statement, 4, noteDataPK)
+        sqlite3_bind_text(statement, 5, (identifier as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(statement, 6, (title as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(statement, 7, (snippet as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(statement, 8, timestamp)
+        sqlite3_bind_double(statement, 9, timestamp)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw NotesError.queryFailed("Failed to insert note: \(String(cString: sqlite3_errmsg(db)))")
+        }
+    }
+
+    private func executeSQL(_ sql: String) throws {
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
     }
 
     // MARK: - Private Helpers
