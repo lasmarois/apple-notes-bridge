@@ -6,7 +6,7 @@ Single source of truth for project goals. Only ONE goal can be `in_progress` at 
 
 | Goal | Description | Status |
 |------|-------------|--------|
-| | | |
+| goal-1 | Research Apple Notes integrability and options | `completed` |
 
 ## Status Legend
 
