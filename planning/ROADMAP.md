@@ -85,15 +85,17 @@ The original goal-1 research incorrectly stated AppleScript couldn't update/dele
 - [x] Add attachments to notes via AppleScript
 - [x] Tools: `get_attachment`, `add_attachment`
 
-### M6.5: Rich Text Support `[likely]`
-- [ ] Test/fix typography: bold, italic, underline, strikethrough
-- [ ] Test/fix headings and lists (bullet, numbered, checklist)
-- [ ] Test/fix fonts and font sizes
-- [ ] Test/fix text colors and highlights
-- [ ] Test/fix emojis (read and write)
-- [ ] Test/fix links (URLs, note links)
-- [ ] Test/fix hashtags/tags
-- [ ] Test/fix tables (if supported)
+### M6.5: Rich Text Support `[committed]` ✅
+- [x] Typography: bold, italic, underline, strikethrough
+- [x] Headings (visual via HTML, not semantic)
+- [x] Lists: bullets (•), numbered
+- [x] Fonts: monospace (Menlo) for code
+- [x] Text colors: inline code (#C7254E), blockquotes (#666)
+- [x] Emojis (preserved on read/write)
+- [x] Markdown-to-HTML conversion for create/update
+- [x] Hashtags: read-only (list, search, extract)
+- [x] Note links: read-only (list, extract)
+- [x] **Limitation:** Native paragraph styles (Title/Heading/Subheading in Format menu) cannot be set programmatically
 
 ### M6.6: Integration Testing `[likely]`
 - [ ] End-to-end test suite
@@ -137,3 +139,4 @@ The original goal-1 research incorrectly stated AppleScript couldn't update/dele
 | 2026-01-19 | **M5 complete:** Folder operations. Tools: create_folder, move_note, rename_folder, delete_folder |
 | 2026-01-19 | Added M6.5 (Rich Text Support) and M6.6 (Integration Testing) milestones between M6 and M7 |
 | 2026-01-19 | **M6 complete:** Attachments. Tools: get_attachment, add_attachment. read_note now includes attachment metadata |
+| 2026-01-19 | **M6.5 complete:** Rich text support. Markdown-to-HTML conversion, hashtags/links read-only. Native paragraph styles documented as platform limitation. |
