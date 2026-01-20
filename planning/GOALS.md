@@ -12,7 +12,7 @@ Single source of truth for project goals. Only ONE goal can be `in_progress` at 
 | goal-4 | M3+M4: Full CRUD via AppleScript (create, update, delete notes) | `completed` |
 | goal-5 | M5: Folder operations (create, move, rename, delete folders) | `completed` |
 | goal-6 | M6: Attachments (read metadata, extract content, create with attachments) | `completed` |
-| goal-7 | M6.5: Rich Text Support (typography, fonts, colors, emojis, links, tags) | `completed` |
+| goal-7 | M6.5: Rich Text Support (typography, fonts, colors, emojis, links, tags) | `iced` |
 | goal-8 | M6.6: Integration Testing (end-to-end tests, edge cases, round-trips) | `completed` |
 | goal-9 | M7: Enhanced Search (fuzzy, multi-term, context search, filters) | `in_progress` |
 

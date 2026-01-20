@@ -24,18 +24,20 @@ jobs:
 
       - name: Compile MiniLM mlpackage to mlmodelc
         run: |
+          RESOURCES_DIR="Sources/NotesLib/Search/Resources"
+
           echo "Compiling Core ML model..."
           xcrun coremlcompiler compile \
             Models/all-MiniLM-L6-v2.mlpackage \
-            Models/
+            "$RESOURCES_DIR/"
 
-          echo "Compilation complete. Contents of Models/:"
-          ls -la Models/
+          echo "Compilation complete. Contents of $RESOURCES_DIR:"
+          ls -la "$RESOURCES_DIR/"
 
           # Verify the compiled model exists
-          if [ -d "Models/all-MiniLM-L6-v2.mlmodelc" ]; then
+          if [ -d "$RESOURCES_DIR/all-MiniLM-L6-v2.mlmodelc" ]; then
             echo "✅ Model compiled successfully!"
-            du -sh Models/all-MiniLM-L6-v2.mlmodelc
+            du -sh "$RESOURCES_DIR/all-MiniLM-L6-v2.mlmodelc"
           else
             echo "❌ Compilation failed - mlmodelc not found"
             exit 1
@@ -45,7 +47,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MiniLM-compiled-model
-          path: Models/all-MiniLM-L6-v2.mlmodelc
+          path: Sources/NotesLib/Search/Resources/all-MiniLM-L6-v2.mlmodelc
           retention-days: 90
 
       - name: Commit compiled model
@@ -54,7 +56,7 @@ jobs:
           git config --local user.name "github-actions[bot]"
 
           # Add the compiled model
-          git add Models/all-MiniLM-L6-v2.mlmodelc
+          git add Sources/NotesLib/Search/Resources/all-MiniLM-L6-v2.mlmodelc
 
           # Check if there are changes to commit
           if git diff --staged --quiet; then

@@ -250,3 +250,129 @@ FTS5 is **1000-3000x faster** for content searches!
 - `eb6dc29` - Enhanced search with content search and threshold hints
 - `32d7cab` - Multi-term, fuzzy matching, and filter support
 - `07118d8` - Result snippets with highlights
+- `f7daefc` - FTS5 full-text search index
+- `b8bc12c` - Auto-build and staleness detection
+
+---
+
+## Session Summary
+
+### Goal-9 Status: Mostly Complete
+
+**Implemented:**
+- ✅ Case-insensitive search
+- ✅ Content search (protobuf decoding)
+- ✅ Multi-term AND/OR queries
+- ✅ Fuzzy matching (Levenshtein distance)
+- ✅ Date range filters
+- ✅ Folder scope filter
+- ✅ Result snippets with highlights
+- ✅ FTS5 full-text index (3000x faster)
+- ✅ Auto-build on first use
+- ✅ Staleness detection & background rebuild
+
+**Blocked:**
+- ⚠️ Semantic search (SimilaritySearchKit Core ML build issue)
+
+### Files Created/Modified
+
+**New files:**
+- `Sources/NotesLib/Search/SearchIndex.swift` - FTS5 index manager
+- `Sources/NotesLib/Search/SemanticSearch.swift` - (excluded, blocked)
+- `Sources/Benchmark/main.swift` - Performance benchmarking tool
+
+**Modified:**
+- `Sources/NotesLib/Notes/Database.swift` - Multi-term, fuzzy, filters, snippets
+- `Sources/NotesLib/Notes/Models.swift` - Added matchSnippet field
+- `Sources/NotesLib/MCP/Server.swift` - New tools, result formatting
+- `Package.swift` - Benchmark target, excluded SemanticSearch
+
+### Index Location
+```
+~/Library/Caches/claude-notes-bridge/search_index.db
+```
+
+### Ready to Archive
+Goal-9 can be archived with semantic search deferred to a future goal.
+
+---
+
+## Session 4 - 2026-01-19 (Session Catchup)
+
+### Context Recovery
+Previous session hit context limit. Caught up via:
+- `session-catchup.py` - detected 2 unsynced messages
+- `git diff --stat` - only progress.md modified (44 lines)
+- Read all planning files
+
+### Current State
+All core search features implemented and committed. Awaiting user input on:
+1. Archive Goal-9 as-is (semantic search deferred)
+2. Debug semantic search before archiving
+3. Other direction
+
+---
+
+## Session 5 - 2026-01-19
+
+### Semantic Search: FIXED! ✅
+
+User chose to fix semantic search. Solution implemented:
+
+**Root cause:** SPM cannot compile `.mlpackage` files - requires full Xcode.
+
+**Solution:** GitHub Actions pre-compilation workflow
+1. Created `.github/workflows/compile-coreml-model.yml`
+2. Workflow runs on `macos-14` with Xcode 15.4
+3. Compiles `.mlpackage` → `.mlmodelc` using `xcrun coremlcompiler`
+4. Commits compiled model back to repo
+
+**Custom MiniLM implementation:**
+- `BertTokenizer.swift` - Tokenizes text using vocab.txt
+- `MiniLMEmbeddings.swift` - Core ML inference wrapper
+- `SemanticSearch.swift` - Builds index, computes cosine similarity
+
+**Files created:**
+- `.github/workflows/compile-coreml-model.yml`
+- `Models/all-MiniLM-L6-v2.mlpackage/` (source)
+- `Models/all-MiniLM-L6-v2.mlmodelc/` (compiled by GH Actions)
+- `Sources/NotesLib/Search/Resources/all-MiniLM-L6-v2.mlmodelc/` (bundled)
+- `Sources/NotesLib/Search/Resources/bert_tokenizer_vocab.txt`
+- `Sources/NotesLib/Search/BertTokenizer.swift`
+- `Sources/NotesLib/Search/MiniLMEmbeddings.swift`
+- `Sources/NotesLib/Search/SemanticSearch.swift`
+
+**Package.swift changes:**
+- Bumped to macOS 13
+- Added CoreML and Accelerate framework linking
+- Added resources for model and vocab
+
+**Test results:**
+```
+Query: "command line tricks" (limit 3)
+Index: 1798 notes
+
+Results:
+1. Bash - filter out lines... (score: 0.86)
+2. Output only lines without #... (score: 0.85)
+3. Diff (compare files line by line) (score: 0.83)
+```
+
+Semantic search correctly finds conceptually related notes!
+
+### Commits
+- `8df0879` - Add MiniLM semantic search with GitHub Actions compilation
+- `2623960` - Fix workflow permissions for pushing compiled model
+- `9ea2eb4` - Enable MiniLM semantic search with compiled Core ML model
+
+### Goal-9 Status: COMPLETE ✅
+
+All search features now working:
+- ✅ Case-insensitive search
+- ✅ Content search (protobuf body)
+- ✅ Multi-term AND/OR queries
+- ✅ Fuzzy matching (Levenshtein)
+- ✅ Date/folder filters
+- ✅ Result snippets with highlights
+- ✅ FTS5 full-text index (3000x faster)
+- ✅ **Semantic search (MiniLM AI embeddings)**
