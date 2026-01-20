@@ -64,6 +64,18 @@ public struct TableCell {
 public struct NoteTable {
     public let rows: [[TableCell]]
     public let position: Int  // Byte position in text where table appears
+
+    public init(rows: [[TableCell]], position: Int) {
+        self.rows = rows
+        self.position = position
+    }
+}
+
+/// Reference to an embedded table object
+public struct TableReference {
+    public let uuid: String
+    public let type: String
+    public let position: Int
 }
 
 /// Styled note content with text and formatting
@@ -71,15 +83,18 @@ public struct StyledNoteContent {
     public let text: String
     public let attributeRuns: [AttributeRun]
     public var tables: [NoteTable] = []
+    public var tableReferences: [TableReference] = []
 
-    public init(text: String, attributeRuns: [AttributeRun], tables: [NoteTable] = []) {
+    public init(text: String, attributeRuns: [AttributeRun], tables: [NoteTable] = [], tableReferences: [TableReference] = []) {
         self.text = text
         self.attributeRuns = attributeRuns
         self.tables = tables
+        self.tableReferences = tableReferences
     }
 
     /// Convert to HTML for rendering
     /// Uses a line-based approach with style lookup from attribute runs
+    /// Tables are inserted inline where U+FFFC placeholders appear
     public func toHTML(darkMode: Bool = false) -> String {
         let bgColor = darkMode ? "#1e1e1e" : "#ffffff"
         let textColor = darkMode ? "#e0e0e0" : "#1d1d1f"
@@ -165,7 +180,8 @@ public struct StyledNoteContent {
         <body>
         """
 
-        // Build a map of byte offset -> style for the start of each run
+        // Build a map of character offset -> style for the start of each run
+        // Note: attribute run lengths are CHARACTER counts, not byte counts
         var styleAtOffset: [(offset: Int, style: NoteStyleType)] = []
         var currentOffset = 0
         for run in attributeRuns {
@@ -173,9 +189,31 @@ public struct StyledNoteContent {
             currentOffset += run.length
         }
 
-        // Process text line by line, grouping consecutive same-style lines
+        // Build a map of character position -> table for inline insertion
+        var tableAtPosition: [Int: NoteTable] = [:]
+        for table in tables {
+            tableAtPosition[table.position] = table
+        }
+
+        // Helper to render a table as HTML
+        func renderTable(_ table: NoteTable) -> String {
+            guard !table.rows.isEmpty else { return "" }
+            var tableHtml = "<table>\n"
+            for (rowIndex, row) in table.rows.enumerated() {
+                tableHtml += "<tr>\n"
+                for cell in row {
+                    let tag = rowIndex == 0 ? "th" : "td"
+                    tableHtml += "<\(tag)>\(escapeHTML(cell.text))</\(tag)>\n"
+                }
+                tableHtml += "</tr>\n"
+            }
+            tableHtml += "</table>\n"
+            return tableHtml
+        }
+
+        // Process text line by line, tracking CHARACTER position (not bytes)
         let lines = text.components(separatedBy: "\n")
-        var bytePosition = 0
+        var charPosition = 0
         var codeBlockLines: [String] = []  // Buffer for consecutive code lines
         var numberedListIndex = 1
 
@@ -188,12 +226,13 @@ public struct StyledNoteContent {
         }
 
         for (index, line) in lines.enumerated() {
-            let lineByteLength = line.utf8.count
+            // Count characters in the line (not bytes!)
+            let lineCharCount = line.count
 
-            // Find the style for this line's starting position
+            // Find the style for this line's starting character position
             var lineStyle: NoteStyleType = .body
             for (offset, style) in styleAtOffset.reversed() {
-                if offset <= bytePosition {
+                if offset <= charPosition {
                     lineStyle = style
                     break
                 }
@@ -209,12 +248,30 @@ public struct StyledNoteContent {
                 lineStyle = .heading
             }
 
-            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            // Check for table placeholder (U+FFFC) in this line
+            // If found, render the table inline and remove the placeholder
+            var processedLine = line
+            var lineCharIndex = 0
+            for char in line {
+                if char == "\u{FFFC}" {
+                    let absolutePos = charPosition + lineCharIndex
+                    if let table = tableAtPosition[absolutePos] {
+                        // Flush any pending code block before table
+                        flushCodeBlock()
+                        html += renderTable(table)
+                    }
+                }
+                lineCharIndex += 1
+            }
+            // Remove placeholder characters for display
+            processedLine = processedLine.replacingOccurrences(of: "\u{FFFC}", with: "")
+
+            let trimmedLine = processedLine.trimmingCharacters(in: .whitespaces)
 
             // Handle monospaced (code) - group consecutive lines
             if lineStyle == .monospaced {
-                codeBlockLines.append(line)  // Keep original indentation for code
-                bytePosition += lineByteLength + 1
+                codeBlockLines.append(processedLine)  // Keep original indentation for code
+                charPosition += lineCharCount + 1  // +1 for newline
                 continue
             } else {
                 flushCodeBlock()
@@ -252,28 +309,12 @@ public struct StyledNoteContent {
                 }
             }
 
-            // Move byte position past this line + newline
-            bytePosition += lineByteLength + 1
+            // Move character position past this line + newline
+            charPosition += lineCharCount + 1
         }
 
         // Flush any remaining code block
         flushCodeBlock()
-
-        // Render tables at the end (they appear as placeholder chars in text)
-        for table in tables {
-            if !table.rows.isEmpty {
-                html += "<table>\n"
-                for (rowIndex, row) in table.rows.enumerated() {
-                    html += "<tr>\n"
-                    for cell in row {
-                        let tag = rowIndex == 0 ? "th" : "td"
-                        html += "<\(tag)>\(escapeHTML(cell.text))</\(tag)>\n"
-                    }
-                    html += "</tr>\n"
-                }
-                html += "</table>\n"
-            }
-        }
 
         html += "</body></html>"
         return html
@@ -507,7 +548,205 @@ public class NoteDecoder {
             attributeRuns = [AttributeRun(length: text.utf8.count, styleType: .body)]
         }
 
-        return StyledNoteContent(text: text, attributeRuns: attributeRuns, tables: [])
+        return StyledNoteContent(text: text, attributeRuns: attributeRuns, tables: [], tableReferences: [])
+    }
+
+    /// Extract table references from note data (separate pass for when tables are needed)
+    public func extractTableReferences(from data: Data) -> [TableReference] {
+        var tableReferences: [TableReference] = []
+        var currentPosition = 0
+
+        // Decompress if needed
+        guard let decompressed = try? decompress(data) else { return [] }
+
+        // Navigate to the note content
+        var offset = 0
+        while offset < decompressed.count {
+            guard let (fieldNumber, wireType, newOffset) = try? readTag(from: decompressed, at: offset),
+                  newOffset > offset else { break }
+            offset = newOffset
+
+            if fieldNumber == 2 && wireType == 2 { // document
+                guard let (docData, nextOffset) = try? readLengthDelimited(from: decompressed, at: offset),
+                      nextOffset > offset else { break }
+                tableReferences = extractTableRefsFromDocument(docData)
+                break
+            } else {
+                offset = (try? skipField(wireType: wireType, from: decompressed, at: offset)) ?? decompressed.count
+            }
+        }
+
+        return tableReferences
+    }
+
+    private func extractTableRefsFromDocument(_ data: Data) -> [TableReference] {
+        var offset = 0
+        while offset < data.count {
+            guard let (fieldNumber, wireType, newOffset) = try? readTag(from: data, at: offset),
+                  newOffset > offset else { break }
+            offset = newOffset
+
+            if fieldNumber == 3 && wireType == 2 { // note
+                guard let (noteData, _) = try? readLengthDelimited(from: data, at: offset) else { break }
+                return extractTableRefsFromNote(noteData)
+            } else {
+                offset = (try? skipField(wireType: wireType, from: data, at: offset)) ?? data.count
+            }
+        }
+        return []
+    }
+
+    private func extractTableRefsFromNote(_ data: Data) -> [TableReference] {
+        var tableReferences: [TableReference] = []
+        var currentPosition = 0
+        var offset = 0
+
+        while offset < data.count {
+            guard let (fieldNumber, wireType, newOffset) = try? readTag(from: data, at: offset),
+                  newOffset > offset else { break }
+            offset = newOffset
+
+            if fieldNumber == 5 && wireType == 2 { // attribute_run
+                guard let (runData, nextOffset) = try? readLengthDelimited(from: data, at: offset),
+                      nextOffset > offset else { break }
+
+                // Parse run for length and table ref
+                var runOffset = 0
+                var length = 0
+                var tableUUID: String?
+                var tableType: String?
+
+                while runOffset < runData.count {
+                    guard let (fn, wt, newOff) = try? readTag(from: runData, at: runOffset),
+                          newOff > runOffset else { break }
+                    runOffset = newOff
+
+                    if fn == 1 && wt == 0 { // length
+                        guard let (val, next) = try? readVarint(from: runData, at: runOffset),
+                              next > runOffset else { break }
+                        length = Int(val)
+                        runOffset = next
+                    } else if fn == 12 && wt == 2 { // embedded object ref
+                        guard let (refData, next) = try? readLengthDelimited(from: runData, at: runOffset),
+                              next > runOffset else { break }
+                        if let ref = parseEmbeddedObjectRef(refData) {
+                            tableUUID = ref.uuid
+                            tableType = ref.type
+                        }
+                        runOffset = next
+                    } else {
+                        runOffset = (try? skipField(wireType: wt, from: runData, at: runOffset)) ?? runData.count
+                    }
+                }
+
+                if let uuid = tableUUID, let type = tableType, type == "com.apple.notes.table" {
+                    tableReferences.append(TableReference(uuid: uuid, type: type, position: currentPosition))
+                }
+                currentPosition += length
+                offset = nextOffset
+            } else {
+                offset = (try? skipField(wireType: wireType, from: data, at: offset)) ?? data.count
+            }
+        }
+
+        return tableReferences
+    }
+
+    /// Parse a CRDT table from ZMERGEABLEDATA1
+    public func parseCRDTTable(_ data: Data, position: Int = 0) -> NoteTable? {
+        var cellTexts: [String] = []
+        extractField10Texts(from: data, into: &cellTexts, depth: 0)
+
+        guard !cellTexts.isEmpty else { return nil }
+
+        // Determine column count heuristically
+        let count = cellTexts.count
+        let columnCount: Int
+        if count % 2 == 0 && count <= 20 {
+            columnCount = 2
+        } else if count % 3 == 0 && count <= 30 {
+            columnCount = 3
+        } else if count % 4 == 0 {
+            columnCount = 4
+        } else {
+            columnCount = 2
+        }
+
+        var rows: [[TableCell]] = []
+        for startIdx in stride(from: 0, to: cellTexts.count, by: columnCount) {
+            let endIdx = min(startIdx + columnCount, cellTexts.count)
+            let rowCells = (startIdx..<endIdx).map { TableCell(text: cellTexts[$0]) }
+            rows.append(rowCells)
+        }
+
+        return NoteTable(rows: rows, position: position)
+    }
+
+    /// Extract text from Field 10 messages (CRDT cell content)
+    private func extractField10Texts(from data: Data, into texts: inout [String], depth: Int) {
+        guard depth < 15, texts.count < 500 else { return }
+
+        var offset = 0
+        while offset < data.count {
+            guard let (fieldNumber, wireType, newOffset) = try? readTag(from: data, at: offset),
+                  newOffset > offset else { break }
+            offset = newOffset
+
+            if wireType == 2 {
+                guard let (fieldData, nextOffset) = try? readLengthDelimited(from: data, at: offset),
+                      nextOffset > offset else { break }
+
+                if fieldNumber == 10 {
+                    // Extract Field 2 text from this cell
+                    if let text = extractField2Text(from: fieldData) {
+                        let cleaned = text.replacingOccurrences(of: "\u{FFFC}", with: "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !cleaned.isEmpty {
+                            texts.append(cleaned)
+                        }
+                    }
+                } else if fieldData.count > 2 {
+                    extractField10Texts(from: fieldData, into: &texts, depth: depth + 1)
+                }
+                offset = nextOffset
+            } else if wireType == 0 {
+                guard let (_, nextOffset) = try? readVarint(from: data, at: offset),
+                      nextOffset > offset else { break }
+                offset = nextOffset
+            } else {
+                let nextOffset = (try? skipField(wireType: wireType, from: data, at: offset)) ?? data.count
+                guard nextOffset > offset else { break }
+                offset = nextOffset
+            }
+        }
+    }
+
+    /// Extract text from Field 2 within a cell
+    private func extractField2Text(from data: Data) -> String? {
+        var offset = 0
+        while offset < data.count {
+            guard let (fieldNumber, wireType, newOffset) = try? readTag(from: data, at: offset),
+                  newOffset > offset else { break }
+            offset = newOffset
+
+            if fieldNumber == 2 && wireType == 2 {
+                guard let (stringData, _) = try? readLengthDelimited(from: data, at: offset) else { return nil }
+                return String(data: stringData, encoding: .utf8)
+            } else if wireType == 2 {
+                guard let (_, nextOffset) = try? readLengthDelimited(from: data, at: offset),
+                      nextOffset > offset else { break }
+                offset = nextOffset
+            } else if wireType == 0 {
+                guard let (_, nextOffset) = try? readVarint(from: data, at: offset),
+                      nextOffset > offset else { break }
+                offset = nextOffset
+            } else {
+                let nextOffset = (try? skipField(wireType: wireType, from: data, at: offset)) ?? data.count
+                guard nextOffset > offset else { break }
+                offset = nextOffset
+            }
+        }
+        return nil
     }
 
     /// Parse a table from embedded object data
@@ -632,6 +871,82 @@ public class NoteDecoder {
         }
 
         return AttributeRun(length: length, styleType: styleType)
+    }
+
+    /// Parse attribute run and extract any embedded table reference (field 12)
+    /// Returns nil for run if parsing fails completely
+    private func parseAttributeRunWithTable(_ data: Data, currentPosition: Int) -> (run: AttributeRun?, tableReference: TableReference?) {
+        var offset = 0
+        var length: Int = 0
+        var styleType: NoteStyleType = .body
+        var tableUUID: String?
+        var tableType: String?
+
+        do {
+            while offset < data.count {
+                let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+                offset = newOffset
+
+                if fieldNumber == 1 && wireType == 0 { // length (varint)
+                    let (value, nextOffset) = try readVarint(from: data, at: offset)
+                    length = Int(value)
+                    offset = nextOffset
+                } else if fieldNumber == 2 && wireType == 2 { // paragraph_style
+                    let (styleData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                    styleType = (try? parseParagraphStyle(styleData)) ?? .body
+                    offset = nextOffset
+                } else if fieldNumber == 12 && wireType == 2 { // embedded object reference
+                    let (refData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                    if let ref = parseEmbeddedObjectRef(refData) {
+                        tableUUID = ref.uuid
+                        tableType = ref.type
+                    }
+                    offset = nextOffset
+                } else {
+                    offset = try skipField(wireType: wireType, from: data, at: offset)
+                }
+            }
+        } catch {
+            // Parsing failed, return what we have
+        }
+
+        let run = AttributeRun(length: length, styleType: styleType)
+        var tableRef: TableReference? = nil
+        if let uuid = tableUUID, let type = tableType, type == "com.apple.notes.table" {
+            tableRef = TableReference(uuid: uuid, type: type, position: currentPosition)
+        }
+
+        return (run, tableRef)
+    }
+
+    /// Parse embedded object reference (field 12 contents)
+    private func parseEmbeddedObjectRef(_ data: Data) -> (uuid: String?, type: String?)? {
+        var offset = 0
+        var uuid: String?
+        var type: String?
+
+        do {
+            while offset < data.count {
+                let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+                offset = newOffset
+
+                if fieldNumber == 1 && wireType == 2 { // UUID string
+                    let (stringData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                    uuid = String(data: stringData, encoding: .utf8)
+                    offset = nextOffset
+                } else if fieldNumber == 2 && wireType == 2 { // type string
+                    let (stringData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                    type = String(data: stringData, encoding: .utf8)
+                    offset = nextOffset
+                } else {
+                    offset = try skipField(wireType: wireType, from: data, at: offset)
+                }
+            }
+        } catch {
+            return nil
+        }
+
+        return (uuid, type)
     }
 
     private func parseParagraphStyle(_ data: Data) throws -> NoteStyleType {

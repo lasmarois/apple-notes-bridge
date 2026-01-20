@@ -132,7 +132,7 @@ public class SearchIndex {
         for note in notes {
             // Get full note content
             var content = ""
-            if let noteContent = try? notesDB.readNote(id: note.id) {
+            if let noteContent = try? notesDB.readNote(id: note.id, includeTables: false) {
                 content = noteContent.content
             }
 
@@ -297,11 +297,10 @@ public class SearchIndex {
     public func searchWithAutoRebuild(query: String, limit: Int = 20) throws -> (results: [(noteId: String, snippet: String)], wasStale: Bool, isRebuilding: Bool) {
         let wasStale = isStale
 
-        // If no index at all, build synchronously first time
+        // If no index at all, start background build and return empty
         if !isIndexed {
-            try buildIndex()
-            let results = try search(query: query, limit: limit)
-            return (results, true, false)
+            rebuildInBackground()
+            return ([], true, true)
         }
 
         // Search with current index

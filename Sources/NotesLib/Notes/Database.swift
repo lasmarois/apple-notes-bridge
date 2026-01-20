@@ -92,7 +92,7 @@ public class NotesDatabase {
     }
 
     /// Read a single note's full content
-    public func readNote(id: String) throws -> NoteContent {
+    public func readNote(id: String, includeTables: Bool = true) throws -> NoteContent {
         try ensureOpen()
 
         // First get metadata
@@ -148,8 +148,20 @@ public class NotesDatabase {
                 let length = sqlite3_column_bytes(contentStatement, 0)
                 let data = Data(bytes: blob, count: Int(length))
                 // Decode with styling for HTML
-                let styledContent = try decoder.decodeStyled(data)
+                var styledContent = try decoder.decodeStyled(data)
                 content = styledContent.text
+
+                // Fetch tables if requested (skip during indexing for performance)
+                if includeTables {
+                    let tableRefs = decoder.extractTableReferences(from: data)
+                    for ref in tableRefs {
+                        if let tableData = try? fetchTableData(uuid: ref.uuid),
+                           let table = decoder.parseCRDTTable(tableData, position: ref.position) {
+                            styledContent.tables.append(table)
+                        }
+                    }
+                }
+
                 htmlContent = styledContent.toHTML(darkMode: false)
             }
         }
@@ -178,6 +190,35 @@ public class NotesDatabase {
         noteContent.noteLinks = noteLinks
 
         return noteContent
+    }
+
+    /// Fetch table data by UUID from ZMERGEABLEDATA1
+    public func fetchTableData(uuid: String) throws -> Data? {
+        try ensureOpen()
+
+        let query = """
+            SELECT ZMERGEABLEDATA1
+            FROM ZICCLOUDSYNCINGOBJECT
+            WHERE ZIDENTIFIER = ?
+            AND ZTYPEUTI = 'com.apple.notes.table'
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, (uuid as NSString).utf8String, -1, SQLITE_TRANSIENT)
+
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let blob = sqlite3_column_blob(statement, 0) else {
+            return nil
+        }
+
+        let length = sqlite3_column_bytes(statement, 0)
+        return Data(bytes: blob, count: Int(length))
     }
 
     // MARK: - Snippet Extraction

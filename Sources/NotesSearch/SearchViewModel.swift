@@ -184,7 +184,7 @@ class SearchViewModel: ObservableObject {
             let notes = try database.searchNotes(
                 query: query,
                 limit: 30,
-                searchContent: true,
+                searchContent: false,  // FTS handles content search more efficiently
                 fuzzy: fuzzyEnabled,
                 folder: selectedFolder
             )
