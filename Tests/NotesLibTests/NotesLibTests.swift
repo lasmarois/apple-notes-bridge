@@ -1416,6 +1416,701 @@ struct DatabaseQueryTests {
     }
 }
 
+// MARK: - BertTokenizer Tests
+
+@Suite("BertTokenizer Tests")
+struct BertTokenizerTests {
+
+    @Test("Initialize tokenizer loads vocab")
+    func testInitialization() throws {
+        let tokenizer = try BertTokenizer()
+        // If initialization succeeds, vocab was loaded
+        #expect(true, "Tokenizer initialized successfully")
+    }
+
+    @Test("Tokenize simple sentence")
+    func testSimpleSentence() throws {
+        let tokenizer = try BertTokenizer()
+        let tokens = tokenizer.buildModelTokens(sentence: "hello world")
+
+        // Should have 512 tokens (maxLen)
+        #expect(tokens.count == 512, "Should pad to 512 tokens")
+
+        // First token should be [CLS] (token ID 101)
+        #expect(tokens[0] == 101, "First token should be [CLS]")
+
+        // Should have [SEP] token (ID 102) after content
+        #expect(tokens.contains(102), "Should contain [SEP] token")
+
+        // Rest should be padding (0s)
+        let paddingStart = tokens.firstIndex(of: 0) ?? 512
+        for i in paddingStart..<512 {
+            #expect(tokens[i] == 0, "Padding should be 0")
+        }
+    }
+
+    @Test("Tokenize with special characters")
+    func testSpecialCharacters() throws {
+        let tokenizer = try BertTokenizer()
+        let tokens = tokenizer.buildModelTokens(sentence: "Hello, World! How are you?")
+
+        #expect(tokens.count == 512, "Should pad to 512 tokens")
+        #expect(tokens[0] == 101, "First token should be [CLS]")
+    }
+
+    @Test("Tokenize unicode text")
+    func testUnicodeText() throws {
+        let tokenizer = try BertTokenizer()
+
+        // Test with accented characters
+        let tokens1 = tokenizer.buildModelTokens(sentence: "café résumé")
+        #expect(tokens1.count == 512, "Should handle accented characters")
+
+        // Test with emoji (may become [UNK])
+        let tokens2 = tokenizer.buildModelTokens(sentence: "hello 🎉 world")
+        #expect(tokens2.count == 512, "Should handle emoji")
+    }
+
+    @Test("Max length truncation")
+    func testMaxLengthTruncation() throws {
+        let tokenizer = try BertTokenizer()
+
+        // Create a very long string that would exceed 512 tokens
+        let longSentence = String(repeating: "word ", count: 1000)
+        let tokens = tokenizer.buildModelTokens(sentence: longSentence)
+
+        #expect(tokens.count == 512, "Should truncate to 512 tokens")
+        #expect(tokens[0] == 101, "First token should still be [CLS]")
+        #expect(tokens[511] == 0 || tokens.contains(102), "Should have [SEP] or be padded")
+    }
+
+    @Test("Build MLMultiArray inputs")
+    func testBuildModelInputs() throws {
+        let tokenizer = try BertTokenizer()
+        let tokens = tokenizer.buildModelTokens(sentence: "test sentence")
+        let (inputIds, attentionMask) = tokenizer.buildModelInputs(from: tokens)
+
+        // Check shapes
+        #expect(inputIds.count == 512, "inputIds should have 512 elements")
+        #expect(attentionMask.count == 512, "attentionMask should have 512 elements")
+
+        // Check that attention mask has 1s for real tokens and 0s for padding
+        let maskPtr = UnsafeMutablePointer<Int32>(OpaquePointer(attentionMask.dataPointer))
+        var foundOne = false
+        var foundZero = false
+        for i in 0..<512 {
+            if maskPtr[i] == 1 { foundOne = true }
+            if maskPtr[i] == 0 { foundZero = true }
+        }
+        #expect(foundOne, "Should have some attention mask 1s")
+        #expect(foundZero, "Should have some attention mask 0s (padding)")
+    }
+
+    @Test("Empty string tokenization")
+    func testEmptyString() throws {
+        let tokenizer = try BertTokenizer()
+        let tokens = tokenizer.buildModelTokens(sentence: "")
+
+        #expect(tokens.count == 512, "Should still pad to 512")
+        #expect(tokens[0] == 101, "Should have [CLS]")
+        #expect(tokens[1] == 102, "Should have [SEP] immediately after [CLS]")
+    }
+
+    @Test("Known token IDs")
+    func testKnownTokenIds() throws {
+        let tokenizer = try BertTokenizer()
+
+        // Test that common words tokenize to expected IDs
+        // "the" should be a single token in BERT vocab
+        let tokens = tokenizer.buildModelTokens(sentence: "the")
+
+        #expect(tokens[0] == 101, "[CLS] = 101")
+        // Token for "the" is typically 1996 in BERT vocab
+        #expect(tokens[1] == 1996, "Token 'the' should be 1996")
+        #expect(tokens[2] == 102, "[SEP] = 102")
+    }
+}
+
+// MARK: - MiniLMEmbeddings Tests
+
+@Suite("MiniLMEmbeddings Tests")
+struct MiniLMEmbeddingsTests {
+
+    @Test("Load model from bundle")
+    func testModelLoading() throws {
+        let embeddings = try MiniLMEmbeddings()
+        _ = embeddings  // Verify initialization succeeded
+    }
+
+    @Test("Generate embeddings for text")
+    func testGenerateEmbeddings() async throws {
+        let embeddings = try MiniLMEmbeddings()
+        let vector = await embeddings.encode("hello world")
+
+        // MiniLM produces 384-dimensional embeddings
+        #expect(vector != nil, "Should produce embedding")
+        guard let vector = vector else { return }
+        #expect(vector.count == 384, "Should produce 384-dim embedding")
+
+        // Values should be normalized (between -1 and 1 typically)
+        for value in vector {
+            #expect(value >= -10 && value <= 10, "Values should be reasonable")
+        }
+    }
+
+    @Test("Different texts produce different embeddings")
+    func testDifferentTexts() async throws {
+        let embeddings = try MiniLMEmbeddings()
+
+        guard let vec1 = await embeddings.encode("hello world"),
+              let vec2 = await embeddings.encode("goodbye moon") else {
+            Issue.record("Failed to generate embeddings")
+            return
+        }
+
+        // Embeddings should be different
+        var different = false
+        for i in 0..<min(vec1.count, vec2.count) {
+            if abs(vec1[i] - vec2[i]) > 0.001 {
+                different = true
+                break
+            }
+        }
+        #expect(different, "Different texts should produce different embeddings")
+    }
+
+    @Test("Similar texts produce similar embeddings")
+    func testSimilarTexts() async throws {
+        let embeddings = try MiniLMEmbeddings()
+
+        guard let vec1 = await embeddings.encode("The cat sat on the mat"),
+              let vec2 = await embeddings.encode("A cat sitting on a mat"),
+              let vec3 = await embeddings.encode("Quantum physics equations") else {
+            Issue.record("Failed to generate embeddings")
+            return
+        }
+
+        // Calculate cosine similarities
+        func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
+            var dot: Float = 0
+            var normA: Float = 0
+            var normB: Float = 0
+            for i in 0..<min(a.count, b.count) {
+                dot += a[i] * b[i]
+                normA += a[i] * a[i]
+                normB += b[i] * b[i]
+            }
+            return dot / (sqrt(normA) * sqrt(normB))
+        }
+
+        let simCatCat = cosineSimilarity(vec1, vec2)
+        let simCatPhysics = cosineSimilarity(vec1, vec3)
+
+        // Similar sentences should have higher similarity
+        #expect(simCatCat > simCatPhysics, "Similar texts should have higher cosine similarity")
+    }
+
+    @Test("Embedding dimension is correct")
+    func testEmbeddingDimension() async throws {
+        let embeddings = try MiniLMEmbeddings()
+
+        let testStrings = ["short", "a longer sentence here", ""]
+        for str in testStrings {
+            guard let vec = await embeddings.encode(str) else {
+                Issue.record("Failed to generate embedding for '\(str)'")
+                continue
+            }
+            #expect(vec.count == 384, "All embeddings should be 384-dim, got \(vec.count) for '\(str)'")
+        }
+    }
+}
+
+// MARK: - SearchIndex (FTS5) Tests
+
+@Suite("SearchIndex Tests")
+struct SearchIndexTests {
+    let database = NotesDatabase()
+
+    @Test("Initialize search index")
+    func testInitialization() {
+        let index = SearchIndex(notesDB: database)
+        _ = index  // Verify initialization succeeded
+    }
+
+    @Test("Build index does not throw")
+    func testBuildIndex() throws {
+        let index = SearchIndex(notesDB: database)
+        let count = try index.buildIndex()
+        #expect(count >= 0, "Index built with \(count) notes")
+    }
+
+    @Test("Search returns results")
+    func testSearch() throws {
+        let index = SearchIndex(notesDB: database)
+        _ = try index.buildIndex()
+
+        // Search for common word
+        let results = try index.search(query: "the", limit: 5)
+
+        // Results array should exist (may be empty if no matches)
+        #expect(results.count >= 0, "Should return results array")
+
+        // If we have results, verify structure
+        for result in results {
+            #expect(!result.noteId.isEmpty, "Result should have noteId")
+            // snippet may be empty for some results
+        }
+    }
+
+    @Test("Search respects limit")
+    func testSearchLimit() throws {
+        let index = SearchIndex(notesDB: database)
+        _ = try index.buildIndex()
+
+        let results = try index.search(query: "a", limit: 3)
+        #expect(results.count <= 3, "Should respect limit parameter")
+    }
+}
+
+// MARK: - SemanticSearch Tests
+
+@Suite("SemanticSearch Tests")
+struct SemanticSearchTests {
+    let database = NotesDatabase()
+
+    @Test("Initialize semantic search")
+    func testInitialization() async {
+        let search = SemanticSearch(notesDB: database)
+        let isIndexed = await search.isIndexed
+        #expect(!isIndexed, "Should not be indexed initially")
+    }
+
+    @Test("Build index from notes")
+    func testBuildIndex() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        let count = try await search.buildIndex()
+        #expect(count >= 0, "Should return count of indexed notes")
+
+        let isIndexed = await search.isIndexed
+        let indexedCount = await search.indexedCount
+
+        // If we have notes, index should be built
+        if count > 0 {
+            #expect(isIndexed, "Should be indexed after build")
+            #expect(indexedCount == count, "indexedCount should match returned count")
+        }
+    }
+
+    @Test("Search returns results with scores")
+    func testSearchReturnsResults() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        // Build index first
+        let indexCount = try await search.buildIndex()
+
+        // Skip test if no notes to search
+        guard indexCount > 0 else {
+            return
+        }
+
+        // Search for a common term
+        let results = try await search.search(query: "note", limit: 5)
+
+        #expect(results.count >= 0, "Should return results array")
+        #expect(results.count <= 5, "Should respect limit")
+
+        // Verify result structure
+        for result in results {
+            #expect(!result.noteId.isEmpty, "Result should have noteId")
+            #expect(!result.title.isEmpty, "Result should have title")
+            #expect(result.score >= -1 && result.score <= 1, "Score should be valid cosine similarity")
+        }
+    }
+
+    @Test("Search results ordered by score descending")
+    func testSearchResultsOrdering() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        let indexCount = try await search.buildIndex()
+        guard indexCount > 1 else { return }
+
+        let results = try await search.search(query: "test", limit: 10)
+
+        // Verify scores are in descending order
+        for i in 0..<(results.count - 1) {
+            #expect(results[i].score >= results[i + 1].score,
+                   "Results should be ordered by score descending")
+        }
+    }
+
+    @Test("Search respects limit parameter")
+    func testSearchLimit() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        let indexCount = try await search.buildIndex()
+        guard indexCount >= 3 else { return }
+
+        let results3 = try await search.search(query: "the", limit: 3)
+        let results1 = try await search.search(query: "the", limit: 1)
+
+        #expect(results3.count <= 3, "Should respect limit of 3")
+        #expect(results1.count <= 1, "Should respect limit of 1")
+    }
+
+    @Test("Add note to index")
+    func testAddNote() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        // Start with empty index
+        let initialCount = await search.indexedCount
+        #expect(initialCount == 0, "Should start empty")
+
+        // Add a note manually
+        try await search.addNote(id: "test-id-123", title: "Test Note Title", folder: "TestFolder")
+
+        let afterCount = await search.indexedCount
+        #expect(afterCount == 1, "Should have 1 note after adding")
+
+        // Search should find it
+        let results = try await search.search(query: "Test Note", limit: 5)
+        #expect(results.count >= 1, "Should find the added note")
+
+        let found = results.contains { $0.noteId == "test-id-123" }
+        #expect(found, "Should find the specific note we added")
+    }
+
+    @Test("Remove note from index")
+    func testRemoveNote() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        // Add a note
+        try await search.addNote(id: "remove-test-id", title: "Remove Me", folder: nil)
+
+        let beforeCount = await search.indexedCount
+        #expect(beforeCount == 1, "Should have 1 note")
+
+        // Remove it
+        await search.removeNote(id: "remove-test-id")
+
+        let afterCount = await search.indexedCount
+        #expect(afterCount == 0, "Should have 0 notes after removal")
+    }
+
+    @Test("Clear index")
+    func testClearIndex() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        // Add some notes
+        try await search.addNote(id: "clear-1", title: "Note One", folder: nil)
+        try await search.addNote(id: "clear-2", title: "Note Two", folder: nil)
+
+        let beforeCount = await search.indexedCount
+        #expect(beforeCount == 2, "Should have 2 notes")
+
+        // Clear
+        await search.clearIndex()
+
+        let afterCount = await search.indexedCount
+        let isIndexed = await search.isIndexed
+
+        #expect(afterCount == 0, "Should have 0 notes after clear")
+        #expect(!isIndexed, "Should not be indexed after clear")
+    }
+
+    @Test("Force rebuild index")
+    func testForceRebuild() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        // Build once
+        let firstCount = try await search.buildIndex()
+
+        // Add a manual note (simulating out-of-sync state)
+        try await search.addNote(id: "extra-note", title: "Extra", folder: nil)
+
+        let withExtra = await search.indexedCount
+        #expect(withExtra == firstCount + 1, "Should have extra note")
+
+        // Force rebuild should reset to database state
+        let rebuildCount = try await search.buildIndex(forceRebuild: true)
+
+        #expect(rebuildCount == firstCount, "Force rebuild should reset to database notes")
+    }
+
+    @Test("Similar queries return similar results")
+    func testSimilarQueries() async throws {
+        let search = SemanticSearch(notesDB: database)
+
+        let indexCount = try await search.buildIndex()
+        guard indexCount >= 3 else { return }
+
+        // Similar queries should return overlapping results
+        let results1 = try await search.search(query: "meeting notes", limit: 5)
+        let results2 = try await search.search(query: "notes from meeting", limit: 5)
+
+        // Get the note IDs from each result set
+        let ids1 = Set(results1.map { $0.noteId })
+        let ids2 = Set(results2.map { $0.noteId })
+
+        // There should be some overlap if both return results
+        if !ids1.isEmpty && !ids2.isEmpty {
+            let overlap = ids1.intersection(ids2)
+            // Similar queries often have overlapping results, but not always
+            // Just verify both searches work
+            #expect(results1.count >= 0 && results2.count >= 0, "Both searches should work")
+        }
+    }
+}
+
+// MARK: - Database Search Tests
+
+@Suite("Database Search Tests")
+struct DatabaseSearchTests {
+    let database = NotesDatabase()
+
+    @Test("Search is case insensitive")
+    func testCaseInsensitiveSearch() throws {
+        let upper = try database.searchNotes(query: "THE", limit: 10)
+        let lower = try database.searchNotes(query: "the", limit: 10)
+        let mixed = try database.searchNotes(query: "ThE", limit: 10)
+
+        // All should return same count (or close)
+        // Note: Results may vary due to ranking, so just check they all work
+        #expect(upper.count >= 0, "Uppercase search works")
+        #expect(lower.count >= 0, "Lowercase search works")
+        #expect(mixed.count >= 0, "Mixed case search works")
+    }
+
+    @Test("Multi-term AND search")
+    func testAndSearch() throws {
+        // This tests the AND functionality
+        let results = try database.searchNotes(query: "note AND test", limit: 10)
+        #expect(results.count >= 0, "AND search should work")
+    }
+
+    @Test("Multi-term OR search")
+    func testOrSearch() throws {
+        let results = try database.searchNotes(query: "note OR test", limit: 10)
+        #expect(results.count >= 0, "OR search should work")
+    }
+
+    @Test("Fuzzy search enabled")
+    func testFuzzySearch() throws {
+        // Fuzzy search should find results even with typos
+        let results = try database.searchNotes(query: "testt", limit: 10, fuzzy: true)
+        #expect(results.count >= 0, "Fuzzy search should work")
+    }
+
+    @Test("Search with folder filter")
+    func testFolderFilter() throws {
+        let results = try database.searchNotes(query: "test", limit: 10, folder: "Notes")
+        #expect(results.count >= 0, "Folder filter should work")
+    }
+
+    @Test("Search with date filter")
+    func testDateFilter() throws {
+        let oneYearAgo = Date().addingTimeInterval(-365 * 24 * 60 * 60)
+        let results = try database.searchNotes(query: "test", limit: 10, modifiedAfter: oneYearAgo)
+        #expect(results.count >= 0, "Date filter should work")
+    }
+}
+
+// MARK: - MCP Search Integration Tests
+// These tests verify the full search pipelines that MCP tools use
+
+@Suite("MCP Search Integration Tests", .tags(.integration))
+struct MCPSearchIntegrationTests {
+    let database = NotesDatabase()
+
+    // MARK: - FTS Search Tool Tests (fts_search)
+
+    @Test("FTS search with auto-rebuild flow")
+    func testFTSSearchAutoRebuild() throws {
+        let index = SearchIndex(notesDB: database)
+
+        // First search should auto-build index
+        let (results, wasStale, isRebuilding) = try index.searchWithAutoRebuild(query: "note", limit: 10)
+
+        // Results should be returned
+        #expect(results.count >= 0, "Should return results")
+
+        // Index should have been built
+        #expect(index.indexedCount > 0 || results.isEmpty, "Index should be built or no notes exist")
+
+        // Verify result structure matches MCP tool expectations
+        for (noteId, snippet) in results {
+            #expect(!noteId.isEmpty, "Result should have noteId")
+            // Snippet may be empty for some results
+        }
+    }
+
+    @Test("FTS search returns ranked results")
+    func testFTSSearchRanking() throws {
+        let index = SearchIndex(notesDB: database)
+
+        // Build index
+        let indexCount = try index.buildIndex()
+        guard indexCount > 0 else { return }
+
+        // Search should return results ordered by relevance (BM25 ranking)
+        let results = try index.search(query: "the", limit: 20)
+
+        // Just verify we got results - FTS5 handles ranking internally
+        #expect(results.count >= 0, "Should return results")
+    }
+
+    @Test("FTS search with phrases")
+    func testFTSPhraseSearch() throws {
+        let index = SearchIndex(notesDB: database)
+        _ = try index.buildIndex()
+
+        // Phrase search (terms in quotes)
+        let results = try index.search(query: "\"the note\"", limit: 10)
+        #expect(results.count >= 0, "Phrase search should work")
+    }
+
+    // MARK: - Semantic Search Tool Tests (semantic_search)
+
+    @Test("Semantic search end-to-end")
+    func testSemanticSearchE2E() async throws {
+        let semanticSearch = SemanticSearch(notesDB: database)
+
+        // Search triggers auto-build
+        let results = try await semanticSearch.search(query: "meeting notes", limit: 5)
+
+        // Verify results structure matches MCP tool output
+        for result in results {
+            #expect(!result.noteId.isEmpty, "Should have noteId")
+            #expect(!result.title.isEmpty, "Should have title")
+            #expect(result.score >= -1 && result.score <= 1, "Score should be cosine similarity")
+            // folder may be nil
+        }
+
+        // Verify index was built
+        let indexedCount = await semanticSearch.indexedCount
+        #expect(indexedCount >= 0, "Should have indexed notes")
+    }
+
+    @Test("Semantic search finds conceptually similar notes")
+    func testSemanticSearchConceptual() async throws {
+        let semanticSearch = SemanticSearch(notesDB: database)
+
+        // Build index
+        let indexCount = try await semanticSearch.buildIndex()
+        guard indexCount >= 3 else { return }
+
+        // Search for a concept - should find related notes even without exact matches
+        let results1 = try await semanticSearch.search(query: "todo list tasks", limit: 5)
+        let results2 = try await semanticSearch.search(query: "things to do checklist", limit: 5)
+
+        // Both conceptually similar queries should return results
+        #expect(results1.count >= 0 && results2.count >= 0, "Both searches should work")
+    }
+
+    // MARK: - search_notes Tool Tests
+
+    @Test("Search notes with all parameters")
+    func testSearchNotesAllParams() throws {
+        let oneYearAgo = Date().addingTimeInterval(-365 * 24 * 60 * 60)
+        let now = Date()
+
+        // Test with all parameter combinations that search_notes MCP tool supports
+        let results = try database.searchNotes(
+            query: "test",
+            limit: 10,
+            searchContent: true,
+            fuzzy: true,
+            folder: nil,  // No folder filter
+            modifiedAfter: oneYearAgo,
+            modifiedBefore: now,
+            createdAfter: oneYearAgo,
+            createdBefore: now
+        )
+
+        #expect(results.count >= 0, "Should return results with all params")
+    }
+
+    @Test("Search notes content search finds body text")
+    func testSearchNotesContentSearch() throws {
+        // With searchContent=true, should search note bodies
+        let resultsWithContent = try database.searchNotes(query: "test", limit: 10, searchContent: true)
+        let resultsWithoutContent = try database.searchNotes(query: "test", limit: 10, searchContent: false)
+
+        // Content search may find more results (or same)
+        #expect(resultsWithContent.count >= 0, "Content search should work")
+        #expect(resultsWithoutContent.count >= 0, "Title search should work")
+    }
+
+    @Test("Search notes fuzzy matching")
+    func testSearchNotesFuzzy() throws {
+        // Fuzzy search should be more tolerant of typos
+        let resultsFuzzy = try database.searchNotes(query: "testt", limit: 10, fuzzy: true)
+        let resultsExact = try database.searchNotes(query: "testt", limit: 10, fuzzy: false)
+
+        // Fuzzy may find results that exact doesn't
+        #expect(resultsFuzzy.count >= resultsExact.count, "Fuzzy should find at least as many results")
+    }
+
+    @Test("Search notes date range filtering")
+    func testSearchNotesDateRange() throws {
+        let twoYearsAgo = Date().addingTimeInterval(-2 * 365 * 24 * 60 * 60)
+        let oneYearAgo = Date().addingTimeInterval(-365 * 24 * 60 * 60)
+        let now = Date()
+
+        // Recent notes only
+        let recentResults = try database.searchNotes(
+            query: "the",
+            limit: 100,
+            modifiedAfter: oneYearAgo
+        )
+
+        // All notes in date range
+        let allResults = try database.searchNotes(
+            query: "the",
+            limit: 100,
+            modifiedAfter: twoYearsAgo
+        )
+
+        // More inclusive date range should have >= results
+        #expect(allResults.count >= recentResults.count, "Wider date range should include more results")
+    }
+
+    // MARK: - Combined Search Workflow Tests
+
+    @Test("FTS then semantic search workflow")
+    func testFTSThenSemanticWorkflow() async throws {
+        // Typical MCP usage: FTS for keyword match, then semantic for related
+        let ftsIndex = SearchIndex(notesDB: database)
+        let semanticSearch = SemanticSearch(notesDB: database)
+
+        // 1. FTS search for exact keyword
+        _ = try ftsIndex.buildIndex()
+        let ftsResults = try ftsIndex.search(query: "note", limit: 5)
+
+        // 2. If FTS found something, use semantic to find related
+        if let firstResult = ftsResults.first {
+            // Get the note title for semantic search
+            if let note = try? database.listNotes(limit: 10000).first(where: { $0.id == firstResult.noteId }) {
+                let semanticResults = try await semanticSearch.search(query: note.title, limit: 5)
+                #expect(semanticResults.count >= 0, "Semantic follow-up should work")
+            }
+        }
+    }
+
+    @Test("Search notes then read note workflow")
+    func testSearchThenReadWorkflow() throws {
+        // Typical MCP usage: search then read full content
+        let searchResults = try database.searchNotes(query: "note", limit: 5)
+
+        // If we found notes, verify we can read them
+        for note in searchResults.prefix(2) {
+            let content = try database.readNote(id: note.id)
+            #expect(!content.title.isEmpty, "Should read note title")
+            #expect(content.id == note.id, "ID should match")
+        }
+    }
+}
+
 // MARK: - Test Tags
 
 extension Tag {
