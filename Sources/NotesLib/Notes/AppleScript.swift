@@ -558,7 +558,8 @@ class NotesAppleScript {
 
     /// Process body text with full markdown conversion
     private func processBody(_ string: String) -> String {
-        return processMarkdown(string)
+        let converter = MarkdownConverter()
+        return converter.convert(string)
     }
 
     private func parseNoteId(_ output: String) throws -> NoteResult {

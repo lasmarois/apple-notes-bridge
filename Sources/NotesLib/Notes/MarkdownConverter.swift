@@ -6,7 +6,7 @@ public class MarkdownConverter {
     public init() {}
 
     /// Convert markdown to HTML
-    /// Handles: code blocks, inline code, bold, italic, strikethrough, headers, lists, blockquotes
+    /// Handles: code blocks, inline code, bold, italic, strikethrough, headers, lists, blockquotes, tables
     public func convert(_ markdown: String) -> String {
         var result = markdown
 
@@ -16,16 +16,118 @@ public class MarkdownConverter {
         // 2. Handle inline code: `code`
         result = processInlineCode(result)
 
-        // 3. Escape HTML in non-code parts and restore code
+        // 3. Handle markdown tables (before escaping)
+        result = processTables(result)
+
+        // 4. Escape HTML in non-code parts and restore code/tables
         result = escapeAndRestoreCode(result)
 
-        // 4. Process markdown formatting
+        // 5. Process markdown formatting
         result = processFormatting(result)
 
-        // 5. Handle line-based markdown (headers, lists, quotes)
+        // 6. Handle line-based markdown (headers, lists, quotes)
         result = processLineBasedMarkdown(result)
 
         return result
+    }
+
+    // MARK: - Table Processing
+
+    private func processTables(_ text: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+        var result: [String] = []
+        var i = 0
+
+        while i < lines.count {
+            let line = lines[i]
+
+            // Check if this line starts a table (starts with |)
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("|") {
+                // Look ahead to see if next line is a separator (|---|---|)
+                if i + 1 < lines.count {
+                    let nextLine = lines[i + 1]
+                    if isTableSeparator(nextLine) {
+                        // This is a table! Parse it
+                        let tableHTML = parseTable(lines: lines, startIndex: i)
+                        result.append("⟦TABLE⟧\(tableHTML)⟦/TABLE⟧")
+
+                        // Skip all table lines
+                        i += 1  // Skip header
+                        i += 1  // Skip separator
+                        while i < lines.count && lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("|") {
+                            i += 1
+                        }
+                        // Skip one trailing blank line if present (common markdown pattern)
+                        if i < lines.count && lines[i].trimmingCharacters(in: .whitespaces).isEmpty {
+                            i += 1
+                        }
+                        continue
+                    }
+                }
+            }
+
+            result.append(line)
+            i += 1
+        }
+
+        return result.joined(separator: "\n")
+    }
+
+    private func isTableSeparator(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("|") else { return false }
+
+        // Check if it's like |---|---| or | --- | --- |
+        let cells = trimmed.split(separator: "|").map { String($0).trimmingCharacters(in: .whitespaces) }
+        return cells.allSatisfy { cell in
+            cell.isEmpty || cell.allSatisfy { $0 == "-" || $0 == ":" }
+        }
+    }
+
+    private func parseTable(lines: [String], startIndex: Int) -> String {
+        // Build table HTML without internal newlines (Notes.app renders them as extra line breaks)
+        var html = "<table cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse: collapse\"><tbody>"
+
+        // Parse header row
+        let headerLine = lines[startIndex]
+        let headerCells = parseTableRow(headerLine)
+        html += "<tr>"
+        for cell in headerCells {
+            let escapedCell = escapeHTMLInCode(cell)
+            html += "<td valign=\"top\" style=\"border-style: solid; border-width: 1px; border-color: #ccc; padding: 3px 5px; min-width: 70px\"><div><b>\(escapedCell)</b></div></td>"
+        }
+        html += "</tr>"
+
+        // Skip separator line, parse data rows
+        var i = startIndex + 2
+        while i < lines.count {
+            let line = lines[i]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("|") else { break }
+
+            let cells = parseTableRow(line)
+            html += "<tr>"
+            for cell in cells {
+                let escapedCell = escapeHTMLInCode(cell)
+                html += "<td valign=\"top\" style=\"border-style: solid; border-width: 1px; border-color: #ccc; padding: 3px 5px; min-width: 70px\"><div>\(escapedCell)</div></td>"
+            }
+            html += "</tr>"
+            i += 1
+        }
+
+        html += "</tbody></table>"
+        return html
+    }
+
+    private func parseTableRow(_ line: String) -> [String] {
+        var trimmed = line.trimmingCharacters(in: .whitespaces)
+
+        // Remove leading and trailing |
+        if trimmed.hasPrefix("|") { trimmed = String(trimmed.dropFirst()) }
+        if trimmed.hasSuffix("|") { trimmed = String(trimmed.dropLast()) }
+
+        return trimmed.split(separator: "|", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
     }
 
     // MARK: - Code Processing
@@ -86,21 +188,20 @@ public class MarkdownConverter {
         var remaining = text
 
         while !remaining.isEmpty {
+            // Find the next placeholder (code block, inline code, or table)
             let codeBlockRange = remaining.range(of: "⟦CODEBLOCK⟧")
             let codeRange = remaining.range(of: "⟦CODE⟧")
+            let tableRange = remaining.range(of: "⟦TABLE⟧")
 
-            let nextPlaceholder: (range: Range<String.Index>, isBlock: Bool)?
-            if let cbr = codeBlockRange, let cr = codeRange {
-                nextPlaceholder = cbr.lowerBound < cr.lowerBound ? (cbr, true) : (cr, false)
-            } else if let cbr = codeBlockRange {
-                nextPlaceholder = (cbr, true)
-            } else if let cr = codeRange {
-                nextPlaceholder = (cr, false)
-            } else {
-                nextPlaceholder = nil
-            }
+            // Determine which placeholder comes first
+            var candidates: [(range: Range<String.Index>, type: String)] = []
+            if let r = codeBlockRange { candidates.append((r, "codeblock")) }
+            if let r = codeRange { candidates.append((r, "code")) }
+            if let r = tableRange { candidates.append((r, "table")) }
 
-            guard let (startRange, isBlock) = nextPlaceholder else {
+            candidates.sort { $0.range.lowerBound < $1.range.lowerBound }
+
+            guard let (startRange, placeholderType) = candidates.first else {
                 escaped += escapeHTML(remaining)
                 break
             }
@@ -109,13 +210,29 @@ public class MarkdownConverter {
             escaped += escapeHTML(before)
 
             let afterStart = String(remaining[startRange.upperBound...])
-            let endTag = isBlock ? "⟦/CODEBLOCK⟧" : "⟦/CODE⟧"
+            let endTag: String
+            switch placeholderType {
+            case "codeblock": endTag = "⟦/CODEBLOCK⟧"
+            case "code": endTag = "⟦/CODE⟧"
+            case "table": endTag = "⟦/TABLE⟧"
+            default: endTag = ""
+            }
 
             if let endRange = afterStart.range(of: endTag) {
-                let codeContent = String(afterStart[..<endRange.lowerBound])
-                // Menlo font, dark red color for inline code only
-                let fontTag = isBlock ? "<font face=\"Menlo\">" : "<font face=\"Menlo\" color=\"#c7254e\">"
-                escaped += "\(fontTag)\(codeContent)</font>"
+                let content = String(afterStart[..<endRange.lowerBound])
+
+                switch placeholderType {
+                case "codeblock":
+                    escaped += "<font face=\"Menlo\">\(content)</font>"
+                case "code":
+                    escaped += "<font face=\"Menlo\" color=\"#c7254e\">\(content)</font>"
+                case "table":
+                    // Table HTML is already properly formatted, just insert it
+                    escaped += content
+                default:
+                    escaped += content
+                }
+
                 remaining = String(afterStart[endRange.upperBound...])
             } else {
                 escaped += escapeHTML(remaining)
@@ -175,7 +292,23 @@ public class MarkdownConverter {
             lines[i] = line
         }
 
-        return lines.joined(separator: "<br>")
+        // Collapse multiple consecutive blank lines into single <br>
+        var result: [String] = []
+        var prevWasBlank = false
+        for line in lines {
+            let isBlank = line.trimmingCharacters(in: .whitespaces).isEmpty
+            if isBlank {
+                if !prevWasBlank {
+                    result.append("")  // Keep one blank line
+                }
+                prevWasBlank = true
+            } else {
+                result.append(line)
+                prevWasBlank = false
+            }
+        }
+
+        return result.joined(separator: "<br>")
     }
 
     // MARK: - Helpers

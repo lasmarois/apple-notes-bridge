@@ -1,529 +1,283 @@
-# Findings: Goal-9 Enhanced Search
+# Goal 7: Findings
 
-## Current Search Implementation Analysis
+## Rich Text Research (2026-01-19)
 
-### What Exists (Database.swift:156-204)
+### How Notes Stores Content
 
-```swift
-public func searchNotes(query: String, limit: Int = 20) throws -> [Note] {
-    // For now, search by title
-    // TODO: Search within decoded content
-    ...
-    AND n.ZTITLE1 LIKE '%' || ? || '%'
-}
+1. **Database (protobuf)**: `ZICNOTEDATA.ZDATA` contains gzipped protobuf
+   - `note_text` field contains **plain text only**
+   - Formatting attributes stored separately in protobuf (not currently parsed)
+
+2. **AppleScript `body`**: Returns HTML representation
+   - Contains formatting tags: `<b>`, `<i>`, `<u>`, `<strike>`, etc.
+   - Font colors: `<font color="#FF0000">`
+   - Font faces: `<font face="Courier"><tt>`
+   - Font sizes: `<span style="font-size: 30px">`
+
+3. **AppleScript `plaintext`**: Returns plain text (matches our protobuf extraction)
+
+### AppleScript HTML Body - Write Capabilities
+
+| Feature | Input | Output | Works? |
+|---------|-------|--------|--------|
+| Bold | `<b>text</b>` | `<b>text</b>` | ✅ |
+| Italic | `<i>text</i>` | `<i>text</i>` | ✅ |
+| Underline | `<u>text</u>` | `<u>text</u>` | ✅ |
+| Strikethrough | `<strike>text</strike>` | `<strike>text</strike>` | ✅ |
+| H1 (title) | `<h1>text</h1>` | `<b><span style="font-size: 24px">` | ✅ |
+| H2 | `<h2>text</h2>` | `<b><span style="font-size: 18px">` | ✅ |
+| H3 | `<h3>text</h3>` | `<b>text</b>` | ⚠️ (just bold) |
+| Text color | `<span style="color: red">` | `<font color="#FF0000">` | ✅ |
+| Highlight | `<span style="background-color: yellow">` | (stripped) | ❌ |
+| Monospace | `<span style="font-family: Courier">` | `<font face="Courier"><tt>` | ✅ |
+| Large font | `<span style="font-size: 30px">` | `<span style="font-size: 30px">` | ✅ |
+| Small font | `<span style="font-size: 10px">` | (stripped) | ❌ |
+| Links | `<a href="url">text</a>` | `<u>text</u>` (URL lost) | ❌ |
+| Bullet lists | `• item` | `• item` (plain text) | ✅ |
+| Numbered lists | `1. item` | `1. item` (plain text) | ✅ |
+| Emojis | `🎉 🚀` | `🎉 🚀` | ✅ |
+| Hashtags | `#tag` | `#tag` (plain text) | ✅ |
+
+### Current Read Capabilities (Protobuf Decoder)
+
+Our decoder extracts `note_text` field which contains **plain text only**:
+
+| Feature | Preserved? | Notes |
+|---------|------------|-------|
+| Plain text | ✅ | Fully preserved |
+| Line breaks | ✅ | Preserved |
+| Bullet points | ✅ | `•` character preserved |
+| Numbered lists | ✅ | `1.` text preserved |
+| Emojis | ✅ | Fully preserved |
+| Hashtags | ✅ | Text preserved |
+| Bold/Italic/etc | ❌ | Formatting lost |
+| Colors | ❌ | Formatting lost |
+| Fonts | ❌ | Formatting lost |
+| Links | ❌ | URL lost, text preserved |
+| Headings | ❌ | Extracted as plain text |
+
+### Key Insights
+
+1. **Writing rich text works well** via AppleScript HTML body
+2. **Reading rich text loses formatting** - our protobuf decoder only extracts plain text
+3. **To preserve formatting on read**, we'd need to either:
+   - Parse the full protobuf structure for formatting attributes
+   - Use AppleScript `body` property to get HTML (but slower)
+4. **Links are not supported** - AppleScript strips href, only preserves underlined text
+5. **Highlights/background colors not supported** by Notes
+6. **Native checklists** require special handling (not just checkmark emoji)
+
+### Recommendations
+
+1. **For write operations**: Current AppleScript HTML approach works well for basic formatting
+2. **For read operations**: Consider adding option to return HTML body via AppleScript for rich text preservation
+3. **Document limitations**: Links cannot be created programmatically via AppleScript
+
+---
+
+## Hashtags & Tags Research (2026-01-19)
+
+### How Hashtags Are Stored
+
+1. **In protobuf**: Inline text attachments with `type_uti = "com.apple.notes.inlinetextattachment.hashtag"`
+   - Text contains `\uFFFC` (object replacement character) as placeholder
+   - Actual hashtag text stored in `attachment_info`
+
+2. **In database**:
+   - `ZICCLOUDSYNCINGOBJECT` with `Z_ENT = 8` (hashtag entity)
+   - `ZDISPLAYTEXT` contains the tag name (without `#` prefix)
+   - `ZTOKENCONTENTIDENTIFIER` links to the full token
+
+3. **In ZSNIPPET**: Hashtags appear as plain text `#tagname` in the note's snippet
+
+### Hashtag Capabilities
+
+| Feature | Supported | Notes |
+|---------|-----------|-------|
+| List all hashtags | ✅ | Query Z_ENT=8 for ZDISPLAYTEXT |
+| Search notes by hashtag | ✅ | LIKE query on ZSNIPPET |
+| Read hashtags from note | ✅ | Regex extract from ZSNIPPET |
+| Create hashtag | ❌ | AppleScript writes `#tag` as plain text |
+
+### Note-to-Note Links Research
+
+1. **In protobuf**: Inline text attachments with `type_uti = "com.apple.notes.inlinetextattachment.link"`
+   - `attachment_info` contains `applenotes:note/<UUID>` URL
+   - Links to other notes in the same account
+
+2. **Via AppleScript**: **NOT SUPPORTED**
+   - `<a href="...">text</a>` becomes `<u>text</u>` (href stripped)
+   - Cannot create clickable links via AppleScript
+
+### Summary
+
+**Tags are read-only**: We can discover, list, and search by hashtags, but cannot create them programmatically. Users must manually type hashtags in Notes.app for them to be recognized as inline attachments.
+
+**Links are read-only**: AppleScript strips all href attributes when writing. Note-to-note links can be **read** from the database but cannot be created programmatically.
+
+---
+
+## Embedded Objects Implementation (2026-01-19)
+
+### Discovery
+After analyzing the `apple-notes-parser` project, discovered the proper way to extract hashtags and links:
+
+- **Column**: `ZTYPEUTI1` (not `ZTYPEUTI` or `Z_ENT=8`)
+- **Text**: `ZALTTEXT` contains the display text
+- **Link URL**: `ZTOKENCONTENTIDENTIFIER` contains `applenotes:note/UUID`
+- **Relationships**: Check `ZNOTE`, `ZNOTE1`, and `ZATTACHMENT` columns
+
+### UTI Constants
+```
+com.apple.notes.inlinetextattachment.hashtag  - Hashtags
+com.apple.notes.inlinetextattachment.mention  - @mentions
+com.apple.notes.inlinetextattachment.link     - Links (including note-to-note)
 ```
 
-**Current limitations:**
-1. **Title-only search** - Only searches `ZTITLE1` column
-2. **Exact substring match** - Uses SQL `LIKE` with wildcards
-3. **Case-sensitive** - No COLLATE NOCASE
-4. **No content search** - Note bodies are protobuf-encoded in `ZICNOTEDATA.ZDATA`
-5. **Single term only** - No AND/OR logic
-6. **No relevance ranking** - Results sorted by modification date only
+### Final Implementation
 
-### Existing Specialized Searches
+| Tool | Function | Works |
+|------|----------|-------|
+| `list_hashtags` | List all unique hashtags | ✅ Found 55 |
+| `search_by_hashtag` | Find notes by hashtag | ✅ |
+| `list_note_links` | List all note-to-note links | ✅ Found 24 |
+| `read_note` | Include hashtags + links in output | ✅ |
 
-| Search Type | Function | How It Works |
-|-------------|----------|--------------|
-| Hashtag search | `searchNotesByHashtag()` | Queries embedded objects table by `ZTYPEUTI1` |
-| Note link search | `listNoteLinks()` | Queries embedded objects with link UTI |
-
-### Data Architecture
-
-```
-ZICCLOUDSYNCINGOBJECT (notes)
-  ├── ZTITLE1 (searchable, plain text)
-  ├── ZSNIPPET (first line, plain text)
-  └── ZNOTEDATA → ZICNOTEDATA.ZDATA (protobuf-encoded body)
-```
-
-**Key insight:** Content search requires decoding protobuf for each note - expensive operation.
+### Limitations Confirmed
+- **Cannot create hashtags** via AppleScript (writes as plain text)
+- **Cannot create links** via AppleScript (strips href)
+- Both features are **read-only**
 
 ---
 
-## Context Search Exploration
+## Markdown-to-HTML Conversion (2026-01-19)
 
-### What is "Context Search"?
+### Implementation
+Added full markdown-to-HTML conversion for `create_note` and `update_note`:
 
-The user wants to find notes semantically related to a topic, not just exact keyword matches.
+| Markdown | HTML Output |
+|----------|-------------|
+| `# Header` | `<h1><b><span style="font-size: 24px">Header</span></b></h1>` |
+| `## Header` | `<b><span style="font-size: 20px">Header</span></b>` |
+| `### Header` | `<b><span style="font-size: 18px">Header</span></b>` |
+| `**bold**` | `<b>bold</b>` |
+| `*italic*` | `<i>italic</i>` |
+| `~~strike~~` | `<strike>strike</strike>` |
+| `` `code` `` | `<font face="Menlo-Regular" color="#c7254e">code</font>` |
+| ` ```code``` ` | `<font face="Menlo-Regular"><tt>code</tt></font>` |
+| `- item` | `• item` |
+| `> quote` | `<font color="#888888">▎ quote</font>` |
 
-**Example scenario:**
-- Query: "grep tricks"
-- Should find:
-  - Notes titled "grep commands"
-  - Notes about regex, awk, sed (related tools)
-  - Notes mentioning "pattern matching", "search files"
-  - Notes in folders like "Commandes cool", "regex"
-
-### Approaches to Context Search
-
-#### 1. Enhanced Text Search (Low complexity)
-- **Fuzzy matching**: Levenshtein distance for typos
-- **Stemming**: "grepping" → "grep"
-- **Multi-term**: AND/OR/NOT operators
-- **Content search**: Decode protobuf and search body text
-
-#### 2. Metadata-Aware Search (Medium complexity)
-- Search folder names
-- Search hashtags
-- Combine title + snippet + folder + hashtags
-
-#### 3. SQLite FTS5 (Medium complexity)
-- Create a virtual table with full-text search
-- Requires indexing decoded content
-- Native SQLite feature, very fast
-- Supports phrase search, boolean operators
-
-#### 4. Semantic/Vector Search (High complexity)
-- Generate embeddings for note content
-- Use vector similarity (cosine distance)
-- Requires ML model (local or API)
-- True "understanding" of meaning
-
----
-
-## Research: SQLite FTS5
-
-SQLite has built-in full-text search via FTS5:
-
-```sql
--- Create virtual table
-CREATE VIRTUAL TABLE notes_fts USING fts5(
-    note_id,
-    title,
-    content,
-    folder,
-    hashtags
-);
-
--- Search with ranking
-SELECT note_id, rank
-FROM notes_fts
-WHERE notes_fts MATCH 'grep OR regex'
-ORDER BY rank;
+### Commits
+```
+d606dd3 Fix duplicate title and finalize markdown support
+1ba21e8 Add full markdown to HTML conversion for notes
+2946e62 Add hashtag and note-link reading support (M6.5)
 ```
 
-**Pros:**
-- Built into SQLite, no external dependencies
-- Very fast queries
-- Supports boolean operators, phrase search, prefix search
-- BM25 ranking built-in
+---
 
-**Cons:**
-- Need to build/maintain the index
-- Index must be updated when notes change
-- Adds complexity (separate table)
+## Native Styles Investigation (2026-01-19)
+
+### Problem
+When writing notes via protobuf encoder with `styleType` values, only **Monospaced (4)** is detected by Notes.app Format menu. Title/Heading/Subheading appear visually correct but are detected as "Body".
+
+### Attempted Solution
+Added `native` parameter to `create_note` to use protobuf encoder with style types:
+- `styleType = 0`: Body
+- `styleType = 1`: Title
+- `styleType = 2`: Heading
+- `styleType = 3`: Subheading
+- `styleType = 4`: Monospaced ✅ (works)
+- `styleType = 100`: Checkbox
+- `styleType = 101`: Checked checkbox
+
+### Analysis of Native Notes
+Compared our protobuf output with native Notes.app output:
+
+| Aspect | Our Encoder | Native Notes.app |
+|--------|-------------|------------------|
+| Attribute runs | ~13 runs | ~263 runs |
+| Default styleType | Uses 1,2,3 for headers | Uses **-1** as default |
+| Title line | styleType=1 | styleType=**0** |
+| Field for runs | Field 5 | Field 3 |
+| Run metadata | Basic | Has `unknown_identifier` (timestamp-like) |
+
+### Hypothesis
+The paragraph-level Title/Heading/Subheading styles may be:
+1. Stored in a different protobuf field (Field 3 vs Field 5)
+2. Require additional metadata (`unknown_identifier`)
+3. Use a different attribute encoding entirely
+
+### Conclusion: Native Styles Not Achievable
+
+**Root Cause Identified:**
+- AppleScript HTML (`<h1>`, `<h2>`) → Sets `font.point_size` + `font_weight` (visual only)
+- Notes.app UI → Sets `paragraph_style.style_type` (semantic)
+- Format menu reads `style_type`, not visual formatting
+
+**Why Monospaced Works:**
+Notes.app maps `font.font_name = "Menlo"` or `"Courier"` to `style_type=4` automatically.
+
+**Approaches Tested:**
+1. ❌ Direct protobuf encoder with style_type=1/2/3 - CloudKit sync issues
+2. ❌ Hybrid (AppleScript create + ZDATA update) - Styles not recognized
+3. ✅ AppleScript HTML - Visual formatting works, but detected as "Body"
+
+**Decision:** Accept this as a platform limitation. Native Title/Heading/Subheading styles cannot be set programmatically. Visual formatting via markdown-to-HTML is sufficient for most use cases.
+
+**Future Research:** Investigate how Notes.app's Format menu applies styles - may require private APIs or accessibility hooks.
 
 ---
 
-## Research: Local Embedding Options
+## Table Support (2026-01-19)
 
-For true semantic search, we'd need embeddings:
+### How Tables Are Stored
 
-### Option A: Apple's NaturalLanguage Framework
-```swift
-import NaturalLanguage
+Tables in Notes.app are stored as **embedded attachments** with UTI `com.apple.notes.table`:
 
-let embedding = NLEmbedding.wordEmbedding(for: .english)
-let vector = embedding?.vector(for: "grep")
-```
-- **Pros:** Built into macOS, fast, no network
-- **Cons:** Word-level only, limited vocabulary
+1. **In database**: `ZICNOTEDATA.ZDATA` contains `￼` (U+FFFC, object replacement character) as placeholder
+2. **As attachment**: Separate `ICAttachment` entity with table data
+3. **Via AppleScript**: HTML `<table>` tags wrapped in `<object>` tags
 
-### Option B: Core ML with Custom Model
-- Use sentence-transformer model converted to Core ML
-- **Pros:** Runs locally, good quality
-- **Cons:** Model size (~100MB+), conversion complexity
+### Table Capabilities
 
-### Option C: External API (OpenAI, Anthropic, etc.)
-- Send content to embedding API
-- **Pros:** Best quality, no local resources
-- **Cons:** Network dependency, cost, privacy concerns
+| Feature | Supported | Notes |
+|---------|-----------|-------|
+| Create tables via HTML | ✅ | `<table>` in AppleScript body → native table |
+| Create tables via markdown | ✅ | Converts `\| a \| b \|` syntax to HTML table |
+| Read tables (HTML format) | ✅ | Returns full HTML with `<object><table>...</table></object>` |
+| Read tables (plain format) | ⚠️ | Shows `￼` placeholder, not table content |
+| Update note preserving table | ✅ | Appending works, full replace removes table |
+| Round-trip (read→write) | ⚠️ | Works if HTML body is passed back unchanged |
 
----
+### Markdown Table Syntax
 
-## Decision Matrix
+Added support in `MarkdownConverter.swift` for standard GitHub-flavored markdown tables:
 
-| Approach | Complexity | Quality | Performance | Dependencies |
-|----------|------------|---------|-------------|--------------|
-| Enhanced text search | Low | Medium | Fast | None |
-| FTS5 index | Medium | Good | Very Fast | None |
-| Apple NL embeddings | Medium | Medium | Fast | macOS 10.15+ |
-| Semantic (external) | High | Excellent | Slow (network) | API key |
-
----
-
-## Open Questions
-
-1. **Should we modify the Apple Notes database?**
-   - Adding FTS5 table might conflict with Notes.app sync
-   - Alternative: Maintain separate index file
-
-2. **How often do we rebuild the index?**
-   - On every search? (slow)
-   - On startup? (stale data)
-   - Watch for changes? (complex)
-
-3. **What's the acceptable search latency?**
-   - Instant for small collections
-   - Users with 1000+ notes?
-
-4. **Should folder search be separate or unified?**
-   - Unified: `search_notes("grep", include_folders: true)`
-   - Separate: `search_folders("regex")`
-
----
-
-## Core ML Semantic Search Research (Session 2)
-
-### Option 1: Apple NLEmbedding (Sentence Embedding)
-
-**Built-in to macOS/iOS, no dependencies**
-
-```swift
-import NaturalLanguage
-
-let embedding = NLEmbedding.sentenceEmbedding(for: .english)!
-let vector = embedding.vector(for: "grep tricks for searching files")
-let distance = embedding.distance(between: sentence1, and: sentence2)
-```
-
-| Property | Value |
-|----------|-------|
-| Vector dimensions | 512 |
-| Platform | macOS 10.15+, iOS 14+ |
-| Languages | Limited (English, Spanish, French, German, etc.) |
-| Output | ONE vector per sentence |
-| Model size | Bundled with OS |
-
-**Pros:**
-- Zero dependencies, always available
-- Fast, on-device
-- Simple API
-
-**Cons:**
-- Limited language support
-- Older technology (not transformer-based)
-- Quality may be lower than BERT
-
----
-
-### Option 2: Apple NLContextualEmbedding (BERT-based)
-
-**WWDC23 addition - Transformer architecture**
-
-```swift
-import NaturalLanguage
-
-let embedding = NLContextualEmbedding.contextualEmbedding(
-    forModelIdentifier: .bert
-)
-let result = try embedding.embeddingResult(for: text, language: .english)
-// Iterate over token vectors
-result.enumerateTokenVectors(in: text.startIndex..<text.endIndex) { vector, range, stop in
-    // vector is 512-dimensional for each TOKEN
-}
+```markdown
+| Name  | Age | City |
+|-------|-----|------|
+| Alice | 30  | NYC  |
+| Bob   | 25  | LA   |
 ```
 
-| Property | Value |
-|----------|-------|
-| Vector dimensions | 512 per token |
-| Architecture | BERT (transformer) |
-| Platform | macOS 14+, iOS 17+ |
-| Languages | Multilingual (3 models) |
-| Output | Vector PER TOKEN (not sentence) |
-| Model size | Downloaded on-demand |
-
-**Pros:**
-- BERT-quality embeddings
-- Multilingual
-- No bundling required (OS downloads)
-
-**Cons:**
-- Returns token vectors, not sentence vectors (need pooling)
-- Requires newer OS versions
-- Asset download required first use
-
----
-
-### Option 3: Custom Core ML Model (Sentence Transformers)
-
-**Convert all-MiniLM-L6-v2 or similar**
-
-Python conversion:
-```python
-import coremltools as ct
-from sentence_transformers import SentenceTransformer
-
-model = SentenceTransformer('all-MiniLM-L6-v2')
-# Trace and convert...
-mlmodel = ct.convert(traced_model, ...)
-mlmodel.save("SentenceEncoder.mlpackage")
-```
-
-| Property | Value |
-|----------|-------|
-| Vector dimensions | 384 (MiniLM) |
-| Model size | ~80-100MB |
-| Quality | High (sentence-optimized) |
-| Platform | macOS 13+, iOS 16+ |
-| Output | ONE vector per sentence |
-
-**Pros:**
-- Best quality sentence embeddings
-- Optimized for semantic similarity
-- Direct sentence → vector
-
-**Cons:**
-- Must bundle model (~100MB)
-- Python conversion step
-- Distribution complexity
-
----
-
-### Vector Storage Options
-
-#### sqlite-vec (Recommended)
-
-Active SQLite extension for vector search:
-
-```sql
--- Create vector table
-CREATE VIRTUAL TABLE note_embeddings USING vec0(
-    note_id TEXT PRIMARY KEY,
-    embedding FLOAT[384] distance_metric=cosine
-);
-
--- Insert
-INSERT INTO note_embeddings(note_id, embedding)
-VALUES ('uuid-123', vec_f32('[0.1, 0.2, ...]'));
-
--- Query (KNN search)
-SELECT note_id, distance
-FROM note_embeddings
-WHERE embedding MATCH vec_f32('[query vector]')
-ORDER BY distance
-LIMIT 10;
-```
-
-**Pros:**
-- Pure C, SIMD optimized
-- Cross-platform (iOS, macOS, etc.)
-- ~30MB memory
-- Cosine, L2, L1 distance
-
-**Cons:**
-- Requires loading extension
-- Sandboxing may be tricky
-
-#### Alternative: Pure Swift Implementation
-
-For simplicity, store vectors as BLOBs and compute cosine similarity in Swift:
-
-```swift
-func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
-    let dot = zip(a, b).reduce(0) { $0 + $1.0 * $1.1 }
-    let normA = sqrt(a.reduce(0) { $0 + $1 * $1 })
-    let normB = sqrt(b.reduce(0) { $0 + $1 * $1 })
-    return dot / (normA * normB)
-}
-```
-
-**Pros:**
-- No extension needed
-- Simple to implement
-- Works anywhere
-
-**Cons:**
-- Brute force O(n) search
-- Slow for large collections
-
----
-
-### Recommendation: Phased Approach
-
-**Phase A: Start with NLEmbedding**
-- Zero dependencies
-- Works on older OS
-- Good enough for many use cases
-- Can compare sentences with `distance(between:)`
-
-**Phase B: Upgrade to NLContextualEmbedding or Core ML**
-- If quality isn't sufficient
-- If multilingual is needed
-- Pool token vectors for sentence embedding
-
-**Phase C: Add sqlite-vec (if needed)**
-- If performance is an issue
-- If note count exceeds ~1000
-- Otherwise brute force is fine
-
----
-
-### Architecture Sketch
-
-```
-User Query: "find text in files"
-       ↓
-   Embedding Model
-   (NLEmbedding or Core ML)
-       ↓
-   Query Vector [0.12, -0.34, ...]
-       ↓
-   Compare with Note Vectors
-   (SQLite or in-memory)
-       ↓
-   Top-K Similar Notes
-   (by cosine similarity)
-       ↓
-   Return Results
-```
-
-### Open Questions (Semantic)
-
-1. **When to generate embeddings?**
-   - On first search? (cold start delay)
-   - Background indexing? (complexity)
-   - Incremental on note change?
-
-2. **Where to store vectors?**
-   - Separate SQLite file (safe)
-   - Separate table in Notes DB (risky)
-   - In-memory cache (lost on restart)
-
-3. **What to embed?**
-   - Title only? (fast, low quality)
-   - Title + snippet? (balanced)
-   - Full content? (slow, best quality)
-
----
-
-## Swift Libraries for Semantic Search (Session 2 - continued)
-
-### Discovery: Ready-to-Use Swift Packages!
-
-Found two excellent Swift packages that handle Core ML embeddings:
-
----
-
-### Option A: SimilaritySearchKit (Recommended)
-
-**GitHub:** https://github.com/ZachNagengast/similarity-search-kit
-
-Complete semantic search solution with bundled models:
-
-```swift
-import SimilaritySearchKit
-import SimilaritySearchKitMiniLMAll
-
-// Create index with MiniLM model
-let index = await SimilarityIndex(
-    model: MiniLMAll(),
-    metric: CosineSimilarity()
-)
-
-// Add notes to index
-await index.addItem(id: noteId, text: noteTitle + " " + noteSnippet,
-                    metadata: ["folder": folder])
-
-// Semantic search
-let results = await index.search("find text in files")
-// Returns ranked SearchResult array
-```
-
-| Property | Value |
-|----------|-------|
-| MiniLM model size | 46 MB |
-| Vector dimensions | 384 |
-| Includes | Tokenizer, embeddings, similarity index |
-| Platform | iOS 16+, macOS 13+ |
-
-**Bundled Models:**
-- `NativeEmbeddings` - Apple's built-in (smaller, less accurate)
-- `MiniLMAll` - 46MB, fast, general purpose ⭐
-- `MiniLMMultiQA` - 46MB, Q&A optimized
-- `Distilbert` - 86MB, highest accuracy
-
-**Pros:**
-- All-in-one solution
-- Models already converted to Core ML
-- High-level API for indexing and search
-- Active maintenance
-
-**Cons:**
-- 46MB+ added to app size
-- May be overkill if we only need embeddings
-
----
-
-### Option B: swift-embeddings
-
-**GitHub:** https://github.com/jkrukowski/swift-embeddings
-
-Loads models directly from Hugging Face:
-
-```swift
-import Embeddings
-
-// Load model from Hugging Face
-let modelBundle = try await Bert.loadModelBundle(
-    from: "sentence-transformers/all-MiniLM-L6-v2"
-)
-
-// Generate embeddings
-let texts = ["grep tricks", "find text in files"]
-let encoded = modelBundle.batchEncode(texts)
-
-// Compute similarity
-let distance = cosineDistance(encoded, encoded)
-```
-
-| Property | Value |
-|----------|-------|
-| Model download | On-demand from HF |
-| Supports | BERT, RoBERTa, XLM-RoBERTa, CLIP |
-| Dependencies | MLTensor, MLTensorUtils |
-| Platform | macOS 15+, iOS 18+ (requires MLTensor) |
-
-**Pros:**
-- Flexible model choice
-- Downloads on-demand
-- Supports many architectures
-
-**Cons:**
-- Newer, requires latest OS
-- Lower-level API (need to build index ourselves)
-- First-run download required
-
----
-
-### Recommendation: SimilaritySearchKit
-
-For our use case, **SimilaritySearchKit** is the better choice:
-
-1. **Batteries included** - Model, tokenizer, index all bundled
-2. **Stable platform support** - Works on macOS 13+ (we need this)
-3. **Proven** - More mature, active community
-4. **Simple integration** - Just add SPM package
-
-### Integration Plan
-
-1. Add `SimilaritySearchKitMiniLMAll` to Package.swift
-2. Create `SemanticSearch` class wrapping the index
-3. On first semantic search:
-   - Build index from note titles + snippets
-   - Cache in memory
-4. Search returns top-K similar notes
-5. New MCP tool: `semantic_search(query, limit)`
-
-### Performance Considerations
-
-| Note Count | Index Build | Search Time |
-|------------|-------------|-------------|
-| 100 | ~1 sec | <50ms |
-| 1,000 | ~10 sec | <100ms |
-| 10,000 | ~100 sec | ~500ms |
-
-*Estimates based on typical embedding generation speed*
-
-Index can be cached to avoid rebuild on every session.
+Converted to Notes.app native table with:
+- Bold headers
+- `#ccc` border color
+- 5px cell padding
+- `min-width: 70px` per cell
+
+### Implementation Details
+
+1. **Detection**: Lines starting with `|` followed by separator line (`|---|---|`)
+2. **Parsing**: Split by `|`, trim whitespace, extract cells
+3. **Output**: HTML `<table>` with inline styles matching Notes.app format
+4. **Integration**: Used `MarkdownConverter` class from `AppleScript.processBody()`
+
+### Limitations
+
+- **Plain text read loses table content** - only shows placeholder character
+- **Full body replacement removes tables** - must preserve `<object><table>` when updating
+- **No table modification** - cannot add/remove rows programmatically
+- **Single-line cells only** - multiline cell content not supported in markdown parser
