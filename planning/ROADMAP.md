@@ -103,19 +103,47 @@ The original goal-1 research incorrectly stated AppleScript couldn't update/dele
 - [ ] Edge cases: special characters, unicode, large notes
 - [ ] iCloud sync verification
 
-### M7: Production Readiness `[exploratory]`
+### M7: Enhanced Search `[committed]` ✅
+- [x] Case-insensitive search
+- [x] Content search (protobuf body decoding)
+- [x] Multi-term queries (AND/OR)
+- [x] Fuzzy matching (Levenshtein distance)
+- [x] Date range and folder filters
+- [x] Result snippets with highlights
+- [x] FTS5 full-text index (3000x faster)
+- [x] Semantic search (MiniLM AI embeddings, Core ML)
+- [x] Tools: `search_notes`, `fts_search`, `build_search_index`, `semantic_search`
+
+### M8: Production Readiness `[exploratory]`
 - [ ] Code signing & notarization
 - [ ] Error handling & logging
 - [ ] Performance optimization
 - [ ] User documentation
 
-### M8: Distribution `[exploratory]`
+### M9: Distribution `[exploratory]`
 - [ ] Homebrew formula or similar
 - [ ] GitHub releases with signed binaries
+
+### M10: Backward Compatibility `[exploratory]`
+- [ ] Support macOS 12 (Monterey) — async/await floor
+- [ ] Support macOS 10.15-11 — feature flags for async/await
+- [ ] Graceful degradation: disable semantic search on older systems
+- [ ] `#available` checks for Core ML features
+- [ ] Test matrix for supported macOS versions
+
+**Version requirements analysis:**
+| Feature | Min macOS |
+|---------|-----------|
+| Core features (SQLite, FTS5, AppleScript) | 10.12 |
+| Core ML semantic search | 10.14 |
+| SPM Bundle.module | 10.15 |
+| async/await | 12.0 |
+| **Current minimum** | **13.0** |
 
 ### Open Questions (H3)
 - What's the best distribution channel for MCP servers?
 - Should we support locked/encrypted notes? (May be impossible)
+- What's the oldest macOS version worth supporting? (10.15? 12?)
 
 ---
 
@@ -140,3 +168,5 @@ The original goal-1 research incorrectly stated AppleScript couldn't update/dele
 | 2026-01-19 | Added M6.5 (Rich Text Support) and M6.6 (Integration Testing) milestones between M6 and M7 |
 | 2026-01-19 | **M6 complete:** Attachments. Tools: get_attachment, add_attachment. read_note now includes attachment metadata |
 | 2026-01-19 | **M6.5 complete:** Rich text support. Markdown-to-HTML conversion, hashtags/links read-only. Native paragraph styles documented as platform limitation. |
+| 2026-01-19 | **M7 complete:** Enhanced search. FTS5 index, fuzzy matching, multi-term, filters, semantic search with MiniLM Core ML. |
+| 2026-01-19 | Added M10 (Backward Compatibility) for supporting older macOS versions. Renumbered M8→M9 (Distribution). |
