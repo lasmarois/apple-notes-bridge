@@ -357,4 +357,47 @@ class SearchViewModel: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(result.id, forType: .string)
     }
+
+    // MARK: - Keyboard Navigation
+
+    func selectNext() {
+        guard !results.isEmpty else { return }
+
+        if let current = selectedResult,
+           let currentIndex = results.firstIndex(of: current) {
+            let nextIndex = min(currentIndex + 1, results.count - 1)
+            selectedResult = results[nextIndex]
+        } else {
+            selectedResult = results.first
+        }
+
+        if let result = selectedResult {
+            loadNoteContent(for: result)
+        }
+    }
+
+    func selectPrevious() {
+        guard !results.isEmpty else { return }
+
+        if let current = selectedResult,
+           let currentIndex = results.firstIndex(of: current) {
+            let prevIndex = max(currentIndex - 1, 0)
+            selectedResult = results[prevIndex]
+        } else {
+            selectedResult = results.first
+        }
+
+        if let result = selectedResult {
+            loadNoteContent(for: result)
+        }
+    }
+
+    func clearSearch() {
+        searchText = ""
+        results = []
+        resultsBySource = [:]
+        selectedResult = nil
+        selectedNoteContent = nil
+        errorMessage = nil
+    }
 }

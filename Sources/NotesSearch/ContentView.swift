@@ -23,6 +23,19 @@ struct ContentView: View {
                     activateApp()
                 }
             }
+            .onExitCommand {
+                viewModel.clearSearch()
+                isSearchFocused = true
+            }
+            .background(KeyboardHandler(
+                onArrowDown: { viewModel.selectNext() },
+                onArrowUp: { viewModel.selectPrevious() },
+                onEnter: { viewModel.openInNotesApp() },
+                onEscape: {
+                    viewModel.clearSearch()
+                    isSearchFocused = true
+                }
+            ))
         }
     }
 
@@ -205,16 +218,23 @@ struct ResultsListView: View {
     @EnvironmentObject var viewModel: SearchViewModel
 
     var body: some View {
-        List(viewModel.results, selection: $viewModel.selectedResult) { result in
-            ResultRowView(result: result)
-                .tag(result)
-        }
-        .listStyle(.sidebar)
-        .onChange(of: viewModel.selectedResult) { newValue in
-            if let result = newValue {
-                viewModel.loadNoteContent(for: result)
-            } else {
-                viewModel.selectedNoteContent = nil
+        ScrollViewReader { proxy in
+            List(viewModel.results, selection: $viewModel.selectedResult) { result in
+                ResultRowView(result: result)
+                    .tag(result)
+                    .id(result.id)
+            }
+            .listStyle(.sidebar)
+            .onChange(of: viewModel.selectedResult) { newValue in
+                if let result = newValue {
+                    viewModel.loadNoteContent(for: result)
+                    // Scroll to selected item
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(result.id, anchor: .center)
+                    }
+                } else {
+                    viewModel.selectedNoteContent = nil
+                }
             }
         }
     }
@@ -424,6 +444,98 @@ struct PermissionView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Keyboard Handler
+
+struct KeyboardHandler: NSViewRepresentable {
+    let onArrowDown: () -> Void
+    let onArrowUp: () -> Void
+    let onEnter: () -> Void
+    let onEscape: () -> Void
+
+    func makeNSView(context: Context) -> KeyboardHandlerView {
+        let view = KeyboardHandlerView()
+        view.onArrowDown = onArrowDown
+        view.onArrowUp = onArrowUp
+        view.onEnter = onEnter
+        view.onEscape = onEscape
+        return view
+    }
+
+    func updateNSView(_ nsView: KeyboardHandlerView, context: Context) {
+        nsView.onArrowDown = onArrowDown
+        nsView.onArrowUp = onArrowUp
+        nsView.onEnter = onEnter
+        nsView.onEscape = onEscape
+    }
+}
+
+class KeyboardHandlerView: NSView {
+    var onArrowDown: (() -> Void)?
+    var onArrowUp: (() -> Void)?
+    var onEnter: (() -> Void)?
+    var onEscape: (() -> Void)?
+
+    private var monitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        if window != nil && monitor == nil {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                return self?.handleKeyEvent(event)
+            }
+        }
+    }
+
+    override func removeFromSuperview() {
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+        super.removeFromSuperview()
+    }
+
+    private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
+        // Don't intercept if a text field is focused (let typing work)
+        if let firstResponder = window?.firstResponder,
+           firstResponder is NSTextView || firstResponder is NSTextField {
+            // Only handle Escape in text fields
+            if event.keyCode == 53 { // Escape
+                onEscape?()
+                return nil
+            }
+            // Let all other keys pass through to the text field
+            return event
+        }
+
+        switch event.keyCode {
+        case 125: // Down arrow
+            onArrowDown?()
+            return nil
+        case 126: // Up arrow
+            onArrowUp?()
+            return nil
+        case 36: // Return/Enter
+            if event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+                onEnter?()
+                return nil
+            }
+        case 53: // Escape
+            onEscape?()
+            return nil
+        default:
+            break
+        }
+        return event
+    }
+
+    deinit {
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+        }
     }
 }
 
