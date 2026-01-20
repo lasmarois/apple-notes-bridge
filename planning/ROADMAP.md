@@ -124,12 +124,12 @@ The original goal-1 research incorrectly stated AppleScript couldn't update/dele
 - [x] Colored terminal output
 - [x] Exit codes for scripting
 
-### M9: Search UI `[committed]`
-- [ ] SwiftUI app for visual search
-- [ ] Real-time search results (FTS + semantic)
-- [ ] Preview note content
-- [ ] Open note in Notes.app
-- [ ] Keyboard navigation
+### M9: Search UI `[committed]` ✅
+- [x] SwiftUI app for visual search
+- [x] Real-time search results (FTS + semantic)
+- [x] Preview note content (rich text + tables)
+- [x] Open note in Notes.app
+- [x] Keyboard navigation
 
 ### M10: Import/Export `[likely]`
 - [ ] Export notes to Markdown files
