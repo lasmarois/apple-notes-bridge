@@ -2318,6 +2318,402 @@ struct TableIntegrationTests {
     }
 }
 
+// MARK: - Markdown Formatter Tests (Export)
+
+@Suite("Markdown Formatter Tests")
+struct MarkdownFormatterTests {
+    let formatter = MarkdownFormatter()
+
+    @Test("Format note with frontmatter")
+    func testFormatWithFrontmatter() throws {
+        var note = NoteContent(
+            id: "test-id",
+            title: "Test Note",
+            content: "Test Note\n\nThis is the body.",
+            folder: "Work",
+            createdAt: nil,
+            modifiedAt: Date(timeIntervalSince1970: 1705747200) // 2024-01-20T12:00:00Z
+        )
+        note.hashtags = ["tag1", "tag2"]
+
+        let options = ExportOptions(includeFrontmatter: true)
+        let result = try formatter.format(note, options: options)
+
+        #expect(result.contains("---"))
+        #expect(result.contains("title: Test Note"))
+        #expect(result.contains("folder: Work"))
+        #expect(result.contains("tags: [tag1, tag2]"))
+        #expect(result.contains("# Test Note"))
+    }
+
+    @Test("Format note without frontmatter")
+    func testFormatWithoutFrontmatter() throws {
+        let note = NoteContent(
+            id: "test-id",
+            title: "Test Note",
+            content: "Test Note\n\nBody content here.",
+            folder: "Work",
+            createdAt: nil,
+            modifiedAt: nil
+        )
+
+        let options = ExportOptions(includeFrontmatter: false)
+        let result = try formatter.format(note, options: options)
+
+        #expect(!result.contains("---"))
+        #expect(result.contains("# Test Note"))
+        #expect(result.contains("Body content here"))
+    }
+
+    @Test("File extension is md")
+    func testFileExtension() {
+        #expect(formatter.fileExtension == "md")
+    }
+
+    @Test("Escape special YAML characters in frontmatter")
+    func testEscapeYAMLCharacters() throws {
+        let note = NoteContent(
+            id: "test-id",
+            title: "Note: With Colon",
+            content: "Note: With Colon\n\nBody",
+            folder: nil,
+            createdAt: nil,
+            modifiedAt: nil
+        )
+
+        let options = ExportOptions(includeFrontmatter: true)
+        let result = try formatter.format(note, options: options)
+
+        // Title with colon should be quoted
+        #expect(result.contains("title: \"Note: With Colon\""))
+    }
+}
+
+// MARK: - JSON Formatter Tests (Export)
+
+@Suite("JSON Formatter Tests")
+struct JSONFormatterTests {
+    let formatter = JSONFormatter()
+
+    @Test("Format note as minimal JSON")
+    func testMinimalJSON() throws {
+        var note = NoteContent(
+            id: "test-id",
+            title: "Test Note",
+            content: "Body content",
+            folder: "Work",
+            createdAt: nil,
+            modifiedAt: nil,
+            htmlContent: "<p>Body content</p>"
+        )
+        note.hashtags = ["tag1"]
+
+        let options = ExportOptions(includeHTML: false, fullMetadata: false)
+        let result = try formatter.format(note, options: options)
+
+        #expect(result.contains("\"id\" : \"test-id\""))
+        #expect(result.contains("\"title\" : \"Test Note\""))
+        #expect(result.contains("\"content\" : \"Body content\""))
+        #expect(!result.contains("htmlContent"))
+        #expect(!result.contains("hashtags"))
+    }
+
+    @Test("Format note as full JSON")
+    func testFullJSON() throws {
+        var note = NoteContent(
+            id: "test-id",
+            title: "Test Note",
+            content: "Body content",
+            folder: "Work",
+            createdAt: nil,
+            modifiedAt: nil,
+            htmlContent: "<p>Body content</p>"
+        )
+        note.hashtags = ["tag1"]
+
+        let options = ExportOptions(includeHTML: true, fullMetadata: true)
+        let result = try formatter.format(note, options: options)
+
+        #expect(result.contains("htmlContent"))
+        #expect(result.contains("hashtags"))
+    }
+
+    @Test("File extension is json")
+    func testFileExtension() {
+        #expect(formatter.fileExtension == "json")
+    }
+}
+
+// MARK: - Frontmatter Parser Tests (Import)
+
+@Suite("Frontmatter Parser Tests")
+struct FrontmatterParserTests {
+    let parser = FrontmatterParser()
+
+    @Test("Parse frontmatter with all fields")
+    func testParseAllFields() {
+        let markdown = """
+        ---
+        title: My Note
+        folder: Work/Projects
+        tags: [tag1, tag2, tag3]
+        created: 2024-01-20T10:00:00Z
+        modified: 2024-01-20T12:00:00Z
+        ---
+
+        # My Note
+
+        Content here.
+        """
+
+        let result = parser.parse(markdown, filename: nil)
+
+        #expect(result.frontmatter.title == "My Note")
+        #expect(result.frontmatter.folder == "Work/Projects")
+        #expect(result.frontmatter.tags == ["tag1", "tag2", "tag3"])
+        #expect(result.frontmatter.created != nil)
+        #expect(result.frontmatter.modified != nil)
+        #expect(result.resolvedTitle == "My Note")
+        #expect(result.content.contains("Content here"))
+        #expect(!result.content.contains("---"))
+    }
+
+    @Test("Parse frontmatter with quoted values")
+    func testQuotedValues() {
+        let markdown = """
+        ---
+        title: "Note: With Colon"
+        folder: 'Single Quoted'
+        ---
+
+        Body
+        """
+
+        let result = parser.parse(markdown, filename: nil)
+
+        #expect(result.frontmatter.title == "Note: With Colon")
+        #expect(result.frontmatter.folder == "Single Quoted")
+    }
+
+    @Test("Resolve title from heading when no frontmatter title")
+    func testTitleFromHeading() {
+        let markdown = """
+        ---
+        folder: Work
+        ---
+
+        # Title From Heading
+
+        Body content.
+        """
+
+        let result = parser.parse(markdown, filename: nil)
+
+        #expect(result.frontmatter.title == nil)
+        #expect(result.resolvedTitle == "Title From Heading")
+    }
+
+    @Test("Resolve title from filename as fallback")
+    func testTitleFromFilename() {
+        let markdown = """
+        Just some content without frontmatter or heading.
+        """
+
+        let result = parser.parse(markdown, filename: "My Document.md")
+
+        #expect(result.resolvedTitle == "My Document")
+    }
+
+    @Test("Parse markdown without frontmatter")
+    func testNoFrontmatter() {
+        let markdown = """
+        # Simple Note
+
+        Just content, no frontmatter.
+        """
+
+        let result = parser.parse(markdown, filename: nil)
+
+        #expect(result.frontmatter.title == nil)
+        #expect(result.frontmatter.folder == nil)
+        #expect(result.resolvedTitle == "Simple Note")
+        #expect(result.content == markdown)
+    }
+
+    @Test("Parse tags in various formats")
+    func testTagFormats() {
+        // Array format
+        let markdown1 = """
+        ---
+        tags: [a, b, c]
+        ---
+        Content
+        """
+        let result1 = parser.parse(markdown1, filename: nil)
+        #expect(result1.frontmatter.tags == ["a", "b", "c"])
+
+        // Comma-separated without brackets
+        let markdown2 = """
+        ---
+        tags: x, y, z
+        ---
+        Content
+        """
+        let result2 = parser.parse(markdown2, filename: nil)
+        #expect(result2.frontmatter.tags == ["x", "y", "z"])
+    }
+
+    @Test("Handle empty frontmatter")
+    func testEmptyFrontmatter() {
+        let markdown = """
+        ---
+        ---
+
+        # Title
+
+        Content
+        """
+
+        let result = parser.parse(markdown, filename: nil)
+
+        #expect(result.frontmatter.title == nil)
+        #expect(result.resolvedTitle == "Title")
+    }
+}
+
+// MARK: - Export Options Tests
+
+@Suite("Export Options Tests")
+struct ExportOptionsTests {
+
+    @Test("Minimal options")
+    func testMinimalOptions() {
+        let options = ExportOptions.minimal
+
+        #expect(options.includeFrontmatter == false)
+        #expect(options.includeHTML == false)
+        #expect(options.fullMetadata == false)
+    }
+
+    @Test("Full options")
+    func testFullOptions() {
+        let options = ExportOptions.full
+
+        #expect(options.includeFrontmatter == true)
+        #expect(options.includeHTML == true)
+        #expect(options.fullMetadata == true)
+    }
+
+    @Test("Default options")
+    func testDefaultOptions() {
+        let options = ExportOptions()
+
+        #expect(options.includeFrontmatter == true)
+        #expect(options.includeHTML == false)
+        #expect(options.fullMetadata == false)
+        #expect(options.includeAttachments == true)
+    }
+}
+
+// MARK: - Import Options Tests
+
+@Suite("Import Options Tests")
+struct ImportOptionsTests {
+
+    @Test("Default import options")
+    func testDefaultOptions() {
+        let options = ImportOptions()
+
+        #expect(options.targetFolder == nil)
+        #expect(options.conflictStrategy == .ask)
+        #expect(options.dryRun == false)
+    }
+
+    @Test("Custom import options")
+    func testCustomOptions() {
+        let options = ImportOptions(
+            targetFolder: "Imported",
+            conflictStrategy: .skip,
+            dryRun: true
+        )
+
+        #expect(options.targetFolder == "Imported")
+        #expect(options.conflictStrategy == .skip)
+        #expect(options.dryRun == true)
+    }
+}
+
+// MARK: - Round-trip Tests (Export -> Import)
+
+@Suite("Export Import Round-trip Tests")
+struct ExportImportRoundtripTests {
+    let markdownFormatter = MarkdownFormatter()
+    let frontmatterParser = FrontmatterParser()
+
+    @Test("Round-trip preserves title and folder")
+    func testRoundtripTitleAndFolder() throws {
+        // Create a note
+        let originalNote = NoteContent(
+            id: "test-id",
+            title: "Round Trip Test",
+            content: "Round Trip Test\n\nThis is test content.",
+            folder: "TestFolder",
+            createdAt: nil,
+            modifiedAt: Date()
+        )
+
+        // Export to markdown
+        let options = ExportOptions(includeFrontmatter: true)
+        let markdown = try markdownFormatter.format(originalNote, options: options)
+
+        // Parse back
+        let parsed = frontmatterParser.parse(markdown, filename: nil)
+
+        // Verify round-trip
+        #expect(parsed.resolvedTitle == originalNote.title)
+        #expect(parsed.frontmatter.folder == originalNote.folder)
+    }
+
+    @Test("Round-trip preserves hashtags")
+    func testRoundtripHashtags() throws {
+        var originalNote = NoteContent(
+            id: "test-id",
+            title: "Tags Test",
+            content: "Tags Test\n\nContent",
+            folder: nil,
+            createdAt: nil,
+            modifiedAt: nil
+        )
+        originalNote.hashtags = ["#project", "#important"]
+
+        let options = ExportOptions(includeFrontmatter: true)
+        let markdown = try markdownFormatter.format(originalNote, options: options)
+        let parsed = frontmatterParser.parse(markdown, filename: nil)
+
+        // Tags should be preserved (without # prefix in frontmatter)
+        #expect(parsed.frontmatter.tags.contains("project"))
+        #expect(parsed.frontmatter.tags.contains("important"))
+    }
+
+    @Test("Round-trip handles special characters in title")
+    func testRoundtripSpecialCharacters() throws {
+        let originalNote = NoteContent(
+            id: "test-id",
+            title: "Note: \"Special\" & <Characters>",
+            content: "Note: \"Special\" & <Characters>\n\nBody",
+            folder: nil,
+            createdAt: nil,
+            modifiedAt: nil
+        )
+
+        let options = ExportOptions(includeFrontmatter: true)
+        let markdown = try markdownFormatter.format(originalNote, options: options)
+        let parsed = frontmatterParser.parse(markdown, filename: nil)
+
+        #expect(parsed.resolvedTitle == originalNote.title)
+    }
+}
+
 // MARK: - Test Tags
 
 extension Tag {

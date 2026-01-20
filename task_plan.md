@@ -43,50 +43,50 @@ All of: Backup, Migration, Automation, Sharing
 
 ## Phases
 
-### Phase 1: Export Infrastructure
-- [ ] Create `Sources/NotesLib/Export/` directory
-- [ ] `NoteFormatter` protocol (pluggable formatters)
-- [ ] `MarkdownFormatter` - StyledNoteContent → Markdown
-- [ ] `JSONFormatter` - NoteContent → JSON
-- [ ] `NotesExporter` - orchestrates export
+### Phase 1: Export Infrastructure ✅
+- [x] Create `Sources/NotesLib/Export/` directory
+- [x] `NoteFormatter` protocol (pluggable formatters)
+- [x] `MarkdownFormatter` - StyledNoteContent → Markdown
+- [x] `JSONFormatter` - NoteContent → JSON
+- [x] `NotesExporter` - orchestrates export
 
-### Phase 2: Export CLI
-- [ ] Add `Export` subcommand to main.swift
-- [ ] Single note export (stdout or file)
-- [ ] Format selection: `--format md|json`
-- [ ] JSON options: `--include-html`, `--full`
-- [ ] Markdown options: `--no-frontmatter`
+### Phase 2: Export CLI ✅
+- [x] Add `Export` subcommand to main.swift
+- [x] Single note export (stdout or file)
+- [x] Format selection: `--format md|json`
+- [x] JSON options: `--include-html`, `--full`
+- [x] Markdown options: `--no-frontmatter`
 
-### Phase 3: Batch Export
-- [ ] `--folder <name>` - export all notes in folder
-- [ ] `--all` - export all notes
-- [ ] `-o <directory>` - output directory
-- [ ] `--no-attachments` - skip attachment copying
-- [ ] Preserve folder structure
+### Phase 3: Batch Export ✅
+- [x] `--folder <name>` - export all notes in folder
+- [x] `--all` - export all notes
+- [x] `-o <directory>` - output directory
+- [x] `--no-attachments` - skip attachment copying
+- [x] Preserve folder structure
 
-### Phase 4: Import Infrastructure
-- [ ] Create `Sources/NotesLib/Import/` directory
-- [ ] `FrontmatterParser` - extract YAML metadata
-- [ ] `NotesImporter` - file → AppleScript create
-- [ ] Conflict detection and resolution
+### Phase 4: Import Infrastructure ✅
+- [x] Create `Sources/NotesLib/Import/` directory
+- [x] `FrontmatterParser` - extract YAML metadata
+- [x] `NotesImporter` - file → AppleScript create
+- [x] Conflict detection and resolution
 
-### Phase 5: Import CLI
-- [ ] Add `Import` subcommand
-- [ ] Single file: `import note.md`
-- [ ] `--folder <name>` - target folder
-- [ ] `--on-conflict` - skip|replace|duplicate|ask
-- [ ] `--dry-run` - preview without executing
+### Phase 5: Import CLI ✅
+- [x] Add `Import` subcommand
+- [x] Single file: `import note.md`
+- [x] `--folder <name>` - target folder
+- [x] `--on-conflict` - skip|replace|duplicate|ask
+- [x] `--dry-run` - preview without executing
 
-### Phase 6: Batch Import
-- [ ] `--dir <path>` - import directory
-- [ ] Create folders matching structure
-- [ ] Interactive conflict resolution
+### Phase 6: Batch Import ✅
+- [x] `--dir <path>` - import directory
+- [x] Create folders matching structure
+- [x] Interactive conflict resolution
 
-### Phase 7: Tests
-- [ ] MarkdownFormatter unit tests
-- [ ] FrontmatterParser unit tests
-- [ ] Export → Import round-trip test
-- [ ] Batch export structure tests
+### Phase 7: Tests ✅
+- [x] MarkdownFormatter unit tests
+- [x] FrontmatterParser unit tests
+- [x] Export → Import round-trip test
+- [x] ExportOptions and ImportOptions tests
 
 ---
 

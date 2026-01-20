@@ -69,7 +69,9 @@ struct NotesBridge: AsyncParsableCommand {
             Search.self,
             List.self,
             Read.self,
-            Folders.self
+            Folders.self,
+            Export.self,
+            Import.self
         ],
         defaultSubcommand: Serve.self
     )
@@ -346,6 +348,422 @@ struct Folders: ParsableCommand {
         }
 
         print("\n\(TerminalStyle.dim)Total: \(folders.count) folder(s)\(TerminalStyle.reset)")
+    }
+}
+
+// MARK: - Export Command
+
+enum ExportFormat: String, ExpressibleByArgument, CaseIterable {
+    case markdown = "md"
+    case json = "json"
+}
+
+struct Export: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Export notes to Markdown or JSON",
+        discussion: """
+            Export notes to Markdown or JSON format.
+
+            Single note:
+              notes-bridge export <id>                    # Markdown to stdout
+              notes-bridge export <id> --format json      # JSON to stdout
+              notes-bridge export <id> -o note.md         # Markdown to file
+
+            Batch export:
+              notes-bridge export --folder "Work" -o ./backup/
+              notes-bridge export --all -o ./backup/
+              notes-bridge export --all -o ./backup/ --no-attachments
+            """
+    )
+
+    // Single note export
+    @Argument(help: "Note ID (UUID) for single note export")
+    var id: String?
+
+    // Batch export options
+    @Option(name: .long, help: "Export all notes in a folder")
+    var folder: String?
+
+    @Flag(name: .long, help: "Export all notes")
+    var all: Bool = false
+
+    // Output options
+    @Option(name: .shortAndLong, help: "Output format: md (default) or json")
+    var format: ExportFormat = .markdown
+
+    @Option(name: .shortAndLong, help: "Output path (file for single, directory for batch)")
+    var output: String?
+
+    // Markdown options
+    @Flag(name: .long, help: "Exclude YAML frontmatter from Markdown output")
+    var noFrontmatter: Bool = false
+
+    // JSON options
+    @Flag(name: .long, help: "Include HTML content in JSON output")
+    var includeHtml: Bool = false
+
+    @Flag(name: .long, help: "Include all metadata (attachments, hashtags, links) in JSON")
+    var full: Bool = false
+
+    // Batch options
+    @Flag(name: .long, help: "Skip attachment copying in batch export")
+    var noAttachments: Bool = false
+
+    func validate() throws {
+        // Must specify exactly one of: id, --folder, or --all
+        let modes = [id != nil, folder != nil, all].filter { $0 }.count
+        if modes == 0 {
+            throw ValidationError("Must specify a note ID, --folder, or --all")
+        }
+        if modes > 1 {
+            throw ValidationError("Cannot combine note ID with --folder or --all")
+        }
+
+        // Batch export requires output directory
+        if (folder != nil || all) && output == nil {
+            throw ValidationError("Batch export requires -o/--output directory")
+        }
+    }
+
+    func run() throws {
+        guard Permissions.hasFullDiskAccess() else {
+            printPermissionError()
+            throw ExitCode.permissionDenied
+        }
+
+        let db = NotesDatabase()
+        let exporter = NotesExporter(database: db)
+
+        // Build export options
+        let options = ExportOptions(
+            includeFrontmatter: !noFrontmatter,
+            includeHTML: includeHtml,
+            fullMetadata: full,
+            includeAttachments: !noAttachments
+        )
+
+        // Get formatter
+        let formatter: NoteFormatter = format == .json ? JSONFormatter() : MarkdownFormatter()
+
+        do {
+            if let noteId = id {
+                // Single note export
+                try exportSingleNote(noteId, exporter: exporter, formatter: formatter, options: options)
+            } else if let folderName = folder {
+                // Folder export
+                try exportFolder(folderName, exporter: exporter, formatter: formatter, options: options)
+            } else if all {
+                // Export all
+                try exportAllNotes(exporter: exporter, formatter: formatter, options: options)
+            }
+        } catch {
+            print(TerminalStyle.error("Export failed: \(error.localizedDescription)"))
+            throw ExitCode.generalError
+        }
+    }
+
+    private func exportSingleNote(
+        _ noteId: String,
+        exporter: NotesExporter,
+        formatter: NoteFormatter,
+        options: ExportOptions
+    ) throws {
+        let content: String
+
+        if format == .markdown {
+            content = try exporter.exportNoteStyled(id: noteId, options: options)
+        } else {
+            content = try exporter.exportNote(id: noteId, formatter: formatter, options: options)
+        }
+
+        // Output to file or stdout
+        if let outputPath = output {
+            let url = URL(fileURLWithPath: outputPath)
+            try content.write(to: url, atomically: true, encoding: .utf8)
+            print(TerminalStyle.success("Exported to \(outputPath)"))
+        } else {
+            print(content)
+        }
+    }
+
+    private func exportFolder(
+        _ folderName: String,
+        exporter: NotesExporter,
+        formatter: NoteFormatter,
+        options: ExportOptions
+    ) throws {
+        let outputDir = URL(fileURLWithPath: output!)
+
+        print(TerminalStyle.title("Exporting folder: \(folderName)\n"))
+
+        let result = try exporter.exportFolder(
+            folderName: folderName,
+            outputDirectory: outputDir,
+            formatter: formatter,
+            options: options
+        ) { current, total in
+            print("\r\(TerminalStyle.dim)Progress: \(current)/\(total)\(TerminalStyle.reset)", terminator: "")
+            fflush(stdout)
+        }
+
+        print("\n")
+        printExportResult(result, outputDir: outputDir)
+    }
+
+    private func exportAllNotes(
+        exporter: NotesExporter,
+        formatter: NoteFormatter,
+        options: ExportOptions
+    ) throws {
+        let outputDir = URL(fileURLWithPath: output!)
+
+        print(TerminalStyle.title("Exporting all notes\n"))
+
+        let result = try exporter.exportAll(
+            outputDirectory: outputDir,
+            formatter: formatter,
+            options: options
+        ) { current, total in
+            print("\r\(TerminalStyle.dim)Progress: \(current)/\(total)\(TerminalStyle.reset)", terminator: "")
+            fflush(stdout)
+        }
+
+        print("\n")
+        printExportResult(result, outputDir: outputDir)
+    }
+
+    private func printExportResult(_ result: ExportResult, outputDir: URL) {
+        print(TerminalStyle.success("Exported \(result.successCount) note(s) to \(outputDir.path)"))
+
+        if !result.exportedAttachments.isEmpty {
+            print(TerminalStyle.success("Copied \(result.exportedAttachments.count) attachment(s)"))
+        }
+
+        if !result.failures.isEmpty {
+            print(TerminalStyle.warning("\(result.failures.count) note(s) failed:"))
+            for failure in result.failures.prefix(5) {
+                print("  - \(failure.title): \(failure.error)")
+            }
+            if result.failures.count > 5 {
+                print("  ... and \(result.failures.count - 5) more")
+            }
+        }
+    }
+}
+
+// MARK: - Import Command
+
+struct Import: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Import notes from Markdown files",
+        discussion: """
+            Import Markdown files into Apple Notes.
+
+            Single file:
+              notes-bridge import note.md
+              notes-bridge import note.md --folder "Work"
+
+            Batch import:
+              notes-bridge import --dir ./notes/
+              notes-bridge import --dir ./notes/ --folder "Imported"
+              notes-bridge import --dir ./notes/ --on-conflict skip
+
+            Frontmatter:
+              Files can include YAML frontmatter with title, folder, and tags.
+            """
+    )
+
+    // Single file import
+    @Argument(help: "Markdown file to import")
+    var file: String?
+
+    // Batch import
+    @Option(name: .long, help: "Import all markdown files from directory")
+    var dir: String?
+
+    // Options
+    @Option(name: .long, help: "Target folder (overrides frontmatter)")
+    var folder: String?
+
+    @Option(name: .long, help: "Conflict handling: skip, replace, duplicate, ask (default)")
+    var onConflict: String = "ask"
+
+    @Flag(name: .long, help: "Preview import without creating notes")
+    var dryRun: Bool = false
+
+    func validate() throws {
+        // Must specify either file or --dir
+        if file == nil && dir == nil {
+            throw ValidationError("Must specify a file or --dir")
+        }
+        if file != nil && dir != nil {
+            throw ValidationError("Cannot specify both file and --dir")
+        }
+
+        // Validate conflict strategy
+        let validStrategies = ["skip", "replace", "duplicate", "ask"]
+        if !validStrategies.contains(onConflict) {
+            throw ValidationError("Invalid --on-conflict value. Use: \(validStrategies.joined(separator: ", "))")
+        }
+    }
+
+    func run() throws {
+        guard Permissions.hasFullDiskAccess() else {
+            printPermissionError()
+            throw ExitCode.permissionDenied
+        }
+
+        let db = NotesDatabase()
+        let importer = NotesImporter(database: db)
+
+        // Parse conflict strategy
+        let strategy: ConflictStrategy
+        switch onConflict {
+        case "skip": strategy = .skip
+        case "replace": strategy = .replace
+        case "duplicate": strategy = .duplicate
+        default: strategy = .ask
+        }
+
+        let options = ImportOptions(
+            targetFolder: folder,
+            conflictStrategy: strategy,
+            dryRun: dryRun
+        )
+
+        do {
+            if let filePath = file {
+                try importSingleFile(filePath, importer: importer, options: options)
+            } else if let dirPath = dir {
+                try importDirectory(dirPath, importer: importer, options: options)
+            }
+        } catch {
+            print(TerminalStyle.error("Import failed: \(error.localizedDescription)"))
+            throw ExitCode.generalError
+        }
+    }
+
+    private func importSingleFile(
+        _ path: String,
+        importer: NotesImporter,
+        options: ImportOptions
+    ) throws {
+        let url = URL(fileURLWithPath: path)
+
+        guard FileManager.default.fileExists(atPath: path) else {
+            print(TerminalStyle.error("File not found: \(path)"))
+            throw ExitCode.notFound
+        }
+
+        if dryRun {
+            print(TerminalStyle.title("Dry run - previewing import\n"))
+        }
+
+        let result = try importer.importFile(url, options: options) { conflict in
+            return handleConflictInteractively(conflict)
+        }
+
+        printImportResult(result, dryRun: dryRun)
+    }
+
+    private func importDirectory(
+        _ path: String,
+        importer: NotesImporter,
+        options: ImportOptions
+    ) throws {
+        let url = URL(fileURLWithPath: path)
+
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
+            print(TerminalStyle.error("Directory not found: \(path)"))
+            throw ExitCode.notFound
+        }
+
+        if dryRun {
+            print(TerminalStyle.title("Dry run - previewing import from: \(path)\n"))
+        } else {
+            print(TerminalStyle.title("Importing from: \(path)\n"))
+        }
+
+        let result = try importer.importDirectory(
+            url,
+            options: options,
+            recursive: true,
+            conflictHandler: { conflict in
+                return handleConflictInteractively(conflict)
+            }
+        ) { current, total in
+            print("\r\(TerminalStyle.dim)Progress: \(current)/\(total)\(TerminalStyle.reset)", terminator: "")
+            fflush(stdout)
+        }
+
+        print("\n")
+        printImportResult(result, dryRun: dryRun)
+    }
+
+    private func handleConflictInteractively(_ conflict: ImportConflict) -> ConflictStrategy {
+        print("\n\(TerminalStyle.warning("Conflict detected:"))")
+        print("  Title: \(conflict.importTitle)")
+        print("  Folder: \(conflict.importFolder ?? "Notes")")
+        print("  Existing note ID: \(conflict.existingNote.id)")
+        print("")
+        print("Options: [s]kip, [r]eplace, [d]uplicate, [S]kip all, [R]eplace all")
+        print("Choice: ", terminator: "")
+        fflush(stdout)
+
+        guard let input = readLine()?.trimmingCharacters(in: .whitespaces) else {
+            return .skip
+        }
+
+        switch input.lowercased() {
+        case "s", "skip": return .skip
+        case "r", "replace": return .replace
+        case "d", "duplicate": return .duplicate
+        default: return .skip
+        }
+    }
+
+    private func printImportResult(_ result: ImportResult, dryRun: Bool) {
+        let verb = dryRun ? "Would import" : "Imported"
+
+        if result.importedCount > 0 {
+            print(TerminalStyle.success("\(verb) \(result.importedCount) note(s)"))
+            if result.importedCount <= 5 {
+                for note in result.imported {
+                    print("  - \(note.title) → \(note.folder ?? "Notes")")
+                }
+            }
+        }
+
+        if result.skippedCount > 0 {
+            print(TerminalStyle.warning("Skipped \(result.skippedCount) note(s)"))
+            for skipped in result.skipped.prefix(3) {
+                print("  - \(skipped.title): \(skipped.reason)")
+            }
+            if result.skippedCount > 3 {
+                print("  ... and \(result.skippedCount - 3) more")
+            }
+        }
+
+        if result.conflictCount > 0 {
+            print(TerminalStyle.warning("\(result.conflictCount) conflict(s) need resolution"))
+        }
+
+        if result.failureCount > 0 {
+            print(TerminalStyle.error("\(result.failureCount) failure(s)"))
+            for failure in result.failures.prefix(5) {
+                let title = failure.title ?? failure.sourceFile.lastPathComponent
+                print("  - \(title): \(failure.error)")
+            }
+            if result.failureCount > 5 {
+                print("  ... and \(result.failureCount - 5) more")
+            }
+        }
+
+        if result.importedCount == 0 && result.skippedCount == 0 &&
+           result.conflictCount == 0 && result.failureCount == 0 {
+            print("No markdown files found to import.")
+        }
     }
 }
 
