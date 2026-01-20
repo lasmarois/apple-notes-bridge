@@ -142,11 +142,15 @@ public class NotesDatabase {
         sqlite3_bind_int64(contentStatement, 1, pk)
 
         var content = ""
+        var htmlContent: String? = nil
         if sqlite3_step(contentStatement) == SQLITE_ROW {
             if let blob = sqlite3_column_blob(contentStatement, 0) {
                 let length = sqlite3_column_bytes(contentStatement, 0)
                 let data = Data(bytes: blob, count: Int(length))
-                content = try decoder.decode(data)
+                // Decode with styling for HTML
+                let styledContent = try decoder.decodeStyled(data)
+                content = styledContent.text
+                htmlContent = styledContent.toHTML(darkMode: false)
             }
         }
 
@@ -166,7 +170,8 @@ public class NotesDatabase {
             content: content,
             folder: folder,
             createdAt: created,
-            modifiedAt: modified
+            modifiedAt: modified,
+            htmlContent: htmlContent
         )
         noteContent.attachments = attachments
         noteContent.hashtags = hashtags

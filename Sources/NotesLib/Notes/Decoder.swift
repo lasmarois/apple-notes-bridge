@@ -1,21 +1,312 @@
 import Foundation
 import Compression
 
+/// Style types from Apple Notes protobuf
+public enum NoteStyleType: Int, Codable {
+    case body = 0
+    case title = 1
+    case heading = 2
+    case subheading = 3
+    case monospaced = 4
+    case bulletList = 100      // Dash list (- item)
+    case numberedList = 101    // Numbered list (1. item)
+    case checkbox = 102        // Unchecked checkbox
+    case checkboxChecked = 103 // Checked checkbox
+    case unknown = -1          // Fallback for unrecognized styles
+
+    public init(rawValue: Int) {
+        switch rawValue {
+        case 0: self = .body
+        case 1: self = .title
+        case 2: self = .heading
+        case 3: self = .subheading
+        case 4: self = .monospaced
+        case 100: self = .bulletList
+        case 101: self = .numberedList
+        case 102: self = .checkbox
+        case 103: self = .checkboxChecked
+        default: self = .body  // Treat unknown as body
+        }
+    }
+
+    public var htmlTag: String {
+        switch self {
+        case .title: return "h1"
+        case .heading: return "h2"
+        case .subheading: return "h3"
+        case .monospaced: return "pre"
+        case .bulletList: return "li"
+        case .numberedList: return "li"
+        case .checkbox: return "li"
+        case .checkboxChecked: return "li"
+        case .body, .unknown: return "p"
+        }
+    }
+}
+
+/// A styled text run with length and style info
+public struct AttributeRun: Codable {
+    public let length: Int
+    public let styleType: NoteStyleType
+
+    public init(length: Int, styleType: NoteStyleType) {
+        self.length = length
+        self.styleType = styleType
+    }
+}
+
+/// Table cell from Apple Notes
+public struct TableCell {
+    public let text: String
+}
+
+/// Table from Apple Notes
+public struct NoteTable {
+    public let rows: [[TableCell]]
+    public let position: Int  // Byte position in text where table appears
+}
+
+/// Styled note content with text and formatting
+public struct StyledNoteContent {
+    public let text: String
+    public let attributeRuns: [AttributeRun]
+    public var tables: [NoteTable] = []
+
+    public init(text: String, attributeRuns: [AttributeRun], tables: [NoteTable] = []) {
+        self.text = text
+        self.attributeRuns = attributeRuns
+        self.tables = tables
+    }
+
+    /// Convert to HTML for rendering
+    /// Uses a line-based approach with style lookup from attribute runs
+    public func toHTML(darkMode: Bool = false) -> String {
+        let bgColor = darkMode ? "#1e1e1e" : "#ffffff"
+        let textColor = darkMode ? "#e0e0e0" : "#1d1d1f"
+        let secondaryColor = darkMode ? "#a0a0a0" : "#86868b"
+        let codeBackground = darkMode ? "#2d2d2d" : "#f5f5f7"
+
+        var html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="UTF-8">
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+                font-size: 15px;
+                line-height: 1.5;
+                color: \(textColor);
+                background-color: \(bgColor);
+                padding: 16px;
+                margin: 0;
+            }
+            h1 {
+                font-size: 28px;
+                font-weight: 700;
+                margin: 0 0 12px 0;
+                color: \(textColor);
+            }
+            h2 {
+                font-size: 22px;
+                font-weight: 600;
+                margin: 16px 0 8px 0;
+                color: \(textColor);
+            }
+            h3 {
+                font-size: 18px;
+                font-weight: 600;
+                margin: 12px 0 6px 0;
+                color: \(textColor);
+            }
+            p {
+                margin: 0 0 8px 0;
+            }
+            pre {
+                font-family: 'SF Mono', Menlo, monospace;
+                font-size: 13px;
+                background-color: \(codeBackground);
+                padding: 12px;
+                border-radius: 6px;
+                overflow-x: auto;
+                margin: 8px 0;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }
+            table {
+                border-collapse: collapse;
+                margin: 12px 0;
+                width: 100%;
+            }
+            th, td {
+                border: 1px solid \(darkMode ? "#444" : "#ddd");
+                padding: 8px 12px;
+                text-align: left;
+            }
+            th {
+                background-color: \(darkMode ? "#2a2a2a" : "#f5f5f7");
+                font-weight: 600;
+            }
+            .checkbox {
+                color: \(secondaryColor);
+            }
+            .checkbox::before {
+                content: "☐ ";
+            }
+            .checkbox-checked {
+                color: \(secondaryColor);
+                text-decoration: line-through;
+            }
+            .checkbox-checked::before {
+                content: "☑ ";
+            }
+        </style>
+        </head>
+        <body>
+        """
+
+        // Build a map of byte offset -> style for the start of each run
+        var styleAtOffset: [(offset: Int, style: NoteStyleType)] = []
+        var currentOffset = 0
+        for run in attributeRuns {
+            styleAtOffset.append((currentOffset, run.styleType))
+            currentOffset += run.length
+        }
+
+        // Process text line by line, grouping consecutive same-style lines
+        let lines = text.components(separatedBy: "\n")
+        var bytePosition = 0
+        var codeBlockLines: [String] = []  // Buffer for consecutive code lines
+        var numberedListIndex = 1
+
+        func flushCodeBlock() {
+            if !codeBlockLines.isEmpty {
+                let codeContent = codeBlockLines.joined(separator: "\n")
+                html += "<pre>\(escapeHTML(codeContent))</pre>\n"
+                codeBlockLines = []
+            }
+        }
+
+        for (index, line) in lines.enumerated() {
+            let lineByteLength = line.utf8.count
+
+            // Find the style for this line's starting position
+            var lineStyle: NoteStyleType = .body
+            for (offset, style) in styleAtOffset.reversed() {
+                if offset <= bytePosition {
+                    lineStyle = style
+                    break
+                }
+            }
+
+            // First line is always title; style 1 on first line = title, on others = heading
+            if index == 0 {
+                if lineStyle == .body || lineStyle == .title {
+                    lineStyle = .title
+                }
+            } else if lineStyle == .title {
+                // Style 1 after first line is actually a heading
+                lineStyle = .heading
+            }
+
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+            // Handle monospaced (code) - group consecutive lines
+            if lineStyle == .monospaced {
+                codeBlockLines.append(line)  // Keep original indentation for code
+                bytePosition += lineByteLength + 1
+                continue
+            } else {
+                flushCodeBlock()
+            }
+
+            // Reset numbered list index when leaving numbered list
+            if lineStyle != .numberedList {
+                numberedListIndex = 1
+            }
+
+            if !trimmedLine.isEmpty {
+                let escapedText = escapeHTML(trimmedLine)
+
+                switch lineStyle {
+                case .title:
+                    html += "<h1>\(escapedText)</h1>\n"
+                case .heading:
+                    html += "<h2>\(escapedText)</h2>\n"
+                case .subheading:
+                    html += "<h3>\(escapedText)</h3>\n"
+                case .monospaced:
+                    // Handled above
+                    break
+                case .bulletList:
+                    html += "<p>• \(escapedText)</p>\n"
+                case .numberedList:
+                    html += "<p>\(numberedListIndex). \(escapedText)</p>\n"
+                    numberedListIndex += 1
+                case .checkbox:
+                    html += "<p>☐ \(escapedText)</p>\n"
+                case .checkboxChecked:
+                    html += "<p style=\"text-decoration: line-through; color: \(secondaryColor)\">☑ \(escapedText)</p>\n"
+                case .body, .unknown:
+                    html += "<p>\(escapedText)</p>\n"
+                }
+            }
+
+            // Move byte position past this line + newline
+            bytePosition += lineByteLength + 1
+        }
+
+        // Flush any remaining code block
+        flushCodeBlock()
+
+        // Render tables at the end (they appear as placeholder chars in text)
+        for table in tables {
+            if !table.rows.isEmpty {
+                html += "<table>\n"
+                for (rowIndex, row) in table.rows.enumerated() {
+                    html += "<tr>\n"
+                    for cell in row {
+                        let tag = rowIndex == 0 ? "th" : "td"
+                        html += "<\(tag)>\(escapeHTML(cell.text))</\(tag)>\n"
+                    }
+                    html += "</tr>\n"
+                }
+                html += "</table>\n"
+            }
+        }
+
+        html += "</body></html>"
+        return html
+    }
+
+    private func escapeHTML(_ string: String) -> String {
+        return string
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "\n", with: "<br>")
+    }
+}
+
 /// Decodes note content from gzipped protobuf format
 public class NoteDecoder {
 
     public init() {}
 
-    /// Decode note content from raw ZDATA blob
+    /// Decode note content from raw ZDATA blob (plain text only)
     public func decode(_ data: Data) throws -> String {
+        let styled = try decodeStyled(data)
+        return styled.text
+    }
+
+    /// Decode note content with styling information
+    public func decodeStyled(_ data: Data) throws -> StyledNoteContent {
         // Step 1: Decompress gzip
         let decompressed = try decompress(data)
 
-        // Step 2: Parse protobuf to extract text
-        // The protobuf structure is:
-        // NoteStoreProto { Document { Note { note_text (field 2) } } }
-        // We'll do a simple parse to extract the text field
-        return try extractNoteText(from: decompressed)
+        // Step 2: Parse protobuf to extract text and styles
+        return try extractStyledContent(from: decompressed)
     }
 
     // MARK: - Gzip Decompression
@@ -139,9 +430,8 @@ public class NoteDecoder {
 
     // MARK: - Protobuf Parsing
 
-    /// Simple protobuf parser to extract note text
-    /// Schema: NoteStoreProto.document(2).note(3).note_text(2)
-    private func extractNoteText(from data: Data) throws -> String {
+    /// Parse protobuf to extract text and attribute runs
+    private func extractStyledContent(from data: Data) throws -> StyledNoteContent {
         var offset = 0
 
         // Parse NoteStoreProto, looking for field 2 (document)
@@ -154,18 +444,18 @@ public class NoteDecoder {
                 offset = nextOffset
 
                 // Parse Document, looking for field 3 (note)
-                if let noteText = try parseDocument(documentData) {
-                    return noteText
+                if let content = try parseDocumentStyled(documentData) {
+                    return content
                 }
             } else {
                 offset = try skipField(wireType: wireType, from: data, at: offset)
             }
         }
 
-        throw NotesError.decodingFailed("Could not find note text in protobuf")
+        throw NotesError.decodingFailed("Could not find note content in protobuf")
     }
 
-    private func parseDocument(_ data: Data) throws -> String? {
+    private func parseDocumentStyled(_ data: Data) throws -> StyledNoteContent? {
         var offset = 0
 
         while offset < data.count {
@@ -176,10 +466,8 @@ public class NoteDecoder {
                 let (noteData, nextOffset) = try readLengthDelimited(from: data, at: offset)
                 offset = nextOffset
 
-                // Parse Note, looking for field 2 (note_text)
-                if let text = try parseNote(noteData) {
-                    return text
-                }
+                // Parse Note for text and attribute_runs
+                return try parseNoteStyled(noteData)
             } else {
                 offset = try skipField(wireType: wireType, from: data, at: offset)
             }
@@ -188,22 +476,180 @@ public class NoteDecoder {
         return nil
     }
 
-    private func parseNote(_ data: Data) throws -> String? {
+    private func parseNoteStyled(_ data: Data) throws -> StyledNoteContent? {
         var offset = 0
+        var noteText: String?
+        var attributeRuns: [AttributeRun] = []
 
         while offset < data.count {
             let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
             offset = newOffset
 
             if fieldNumber == 2 && wireType == 2 { // note_text (string)
-                let (stringData, _) = try readLengthDelimited(from: data, at: offset)
-                return String(data: stringData, encoding: .utf8)
+                let (stringData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                noteText = String(data: stringData, encoding: .utf8)
+                offset = nextOffset
+            } else if fieldNumber == 5 && wireType == 2 { // attribute_run (repeated)
+                let (runData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                if let run = try parseAttributeRun(runData) {
+                    attributeRuns.append(run)
+                }
+                offset = nextOffset
+            } else {
+                offset = try skipField(wireType: wireType, from: data, at: offset)
+            }
+        }
+
+        guard let text = noteText else { return nil }
+
+        // If no attribute runs found, create a default body run
+        if attributeRuns.isEmpty {
+            attributeRuns = [AttributeRun(length: text.utf8.count, styleType: .body)]
+        }
+
+        return StyledNoteContent(text: text, attributeRuns: attributeRuns, tables: [])
+    }
+
+    /// Parse a table from embedded object data
+    private func parseTable(_ data: Data) throws -> NoteTable? {
+        var offset = 0
+        var rows: [[TableCell]] = []
+        var position = 0
+
+        while offset < data.count {
+            let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+            offset = newOffset
+
+            if fieldNumber == 1 && wireType == 0 { // position in text
+                let (value, nextOffset) = try readVarint(from: data, at: offset)
+                position = Int(value)
+                offset = nextOffset
+            } else if fieldNumber == 2 && wireType == 2 { // table data
+                let (tableData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                rows = try parseTableRows(tableData)
+                offset = nextOffset
+            } else {
+                offset = try skipField(wireType: wireType, from: data, at: offset)
+            }
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return NoteTable(rows: rows, position: position)
+    }
+
+    /// Parse table rows
+    private func parseTableRows(_ data: Data) throws -> [[TableCell]] {
+        var offset = 0
+        var rows: [[TableCell]] = []
+
+        while offset < data.count {
+            let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+            offset = newOffset
+
+            if wireType == 2 { // row data (length-delimited)
+                let (rowData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                let cells = try parseTableCells(rowData)
+                if !cells.isEmpty {
+                    rows.append(cells)
+                }
+                offset = nextOffset
+            } else {
+                offset = try skipField(wireType: wireType, from: data, at: offset)
+            }
+        }
+
+        return rows
+    }
+
+    /// Parse cells in a table row
+    private func parseTableCells(_ data: Data) throws -> [TableCell] {
+        var offset = 0
+        var cells: [TableCell] = []
+
+        while offset < data.count {
+            let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+            offset = newOffset
+
+            if wireType == 2 { // cell data
+                let (cellData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                // Try to extract text from cell
+                if let text = String(data: cellData, encoding: .utf8) {
+                    cells.append(TableCell(text: text))
+                } else if let text = try? extractCellText(cellData) {
+                    cells.append(TableCell(text: text))
+                }
+                offset = nextOffset
+            } else {
+                offset = try skipField(wireType: wireType, from: data, at: offset)
+            }
+        }
+
+        return cells
+    }
+
+    /// Extract text from a cell's protobuf structure
+    private func extractCellText(_ data: Data) throws -> String? {
+        var offset = 0
+
+        while offset < data.count {
+            let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+            offset = newOffset
+
+            if wireType == 2 { // string field
+                let (stringData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                if let text = String(data: stringData, encoding: .utf8), !text.isEmpty {
+                    return text
+                }
+                offset = nextOffset
             } else {
                 offset = try skipField(wireType: wireType, from: data, at: offset)
             }
         }
 
         return nil
+    }
+
+    private func parseAttributeRun(_ data: Data) throws -> AttributeRun? {
+        var offset = 0
+        var length: Int = 0
+        var styleType: NoteStyleType = .body
+
+        while offset < data.count {
+            let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+            offset = newOffset
+
+            if fieldNumber == 1 && wireType == 0 { // length (varint)
+                let (value, nextOffset) = try readVarint(from: data, at: offset)
+                length = Int(value)
+                offset = nextOffset
+            } else if fieldNumber == 2 && wireType == 2 { // paragraph_style (length-delimited)
+                let (styleData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                styleType = try parseParagraphStyle(styleData)
+                offset = nextOffset
+            } else {
+                offset = try skipField(wireType: wireType, from: data, at: offset)
+            }
+        }
+
+        return AttributeRun(length: length, styleType: styleType)
+    }
+
+    private func parseParagraphStyle(_ data: Data) throws -> NoteStyleType {
+        var offset = 0
+
+        while offset < data.count {
+            let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+            offset = newOffset
+
+            if fieldNumber == 1 && wireType == 0 { // style_type (varint)
+                let (value, _) = try readVarint(from: data, at: offset)
+                return NoteStyleType(rawValue: Int(value)) ?? .body
+            } else {
+                offset = try skipField(wireType: wireType, from: data, at: offset)
+            }
+        }
+
+        return .body
     }
 
     // MARK: - Protobuf Primitives

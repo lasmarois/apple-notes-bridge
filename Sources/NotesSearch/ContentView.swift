@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import WebKit
 import NotesLib
 
 struct ContentView: View {
@@ -321,16 +322,13 @@ struct SourceBadge: View {
 struct NotePreviewView: View {
     let note: NoteContent
     @EnvironmentObject var viewModel: SearchViewModel
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
+            // Header with actions
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(note.title)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-
                     HStack(spacing: 12) {
                         if let folder = note.folder {
                             Label(folder, systemImage: "folder")
@@ -366,17 +364,22 @@ struct NotePreviewView: View {
                     }
                 }
             }
-            .padding()
+            .padding(.horizontal)
+            .padding(.vertical, 8)
 
             Divider()
 
-            // Content
-            ScrollView {
-                Text(note.content)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+            // Content - use HTML if available
+            if let html = note.htmlContent {
+                HTMLView(html: html, darkMode: colorScheme == .dark)
+            } else {
+                ScrollView {
+                    Text(note.content)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
             }
 
             // Footer with metadata
@@ -405,6 +408,46 @@ struct NotePreviewView: View {
                 .padding()
             }
         }
+    }
+}
+
+// MARK: - HTML View (WKWebView wrapper)
+
+struct HTMLView: NSViewRepresentable {
+    let html: String
+    let darkMode: Bool
+
+    func makeNSView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.setValue(false, forKey: "drawsBackground")
+        return webView
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        // Update HTML with correct dark mode setting
+        let updatedHTML = updateHTMLForDarkMode(html, darkMode: darkMode)
+        webView.loadHTMLString(updatedHTML, baseURL: nil)
+    }
+
+    private func updateHTMLForDarkMode(_ html: String, darkMode: Bool) -> String {
+        // If the HTML already has the correct mode, return as-is
+        // Otherwise, regenerate with correct colors
+        let bgColor = darkMode ? "#1e1e1e" : "#ffffff"
+        let textColor = darkMode ? "#e0e0e0" : "#1d1d1f"
+        let codeBackground = darkMode ? "#2d2d2d" : "#f5f5f7"
+
+        var result = html
+        // Quick replacement of color values
+        if darkMode {
+            result = result
+                .replacingOccurrences(of: "background-color: #ffffff", with: "background-color: #1e1e1e")
+                .replacingOccurrences(of: "color: #1d1d1f", with: "color: #e0e0e0")
+                .replacingOccurrences(of: "background-color: #f5f5f7", with: "background-color: #2d2d2d")
+        }
+        return result
     }
 }
 

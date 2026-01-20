@@ -32,19 +32,21 @@ public struct NoteContent: Codable {
     public var attachments: [Attachment] = []
     public var hashtags: [String] = []
     public var noteLinks: [NoteLink] = []
+    public var htmlContent: String?  // Rich text HTML for rendering
 
     enum CodingKeys: String, CodingKey {
         case id, title, content, folder, createdAt, modifiedAt
-        case attachments, hashtags, noteLinks
+        case attachments, hashtags, noteLinks, htmlContent
     }
 
-    public init(id: String, title: String, content: String, folder: String?, createdAt: Date?, modifiedAt: Date?) {
+    public init(id: String, title: String, content: String, folder: String?, createdAt: Date?, modifiedAt: Date?, htmlContent: String? = nil) {
         self.id = id
         self.title = title
         self.content = content
         self.folder = folder
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
+        self.htmlContent = htmlContent
     }
 
     public init(from decoder: Decoder) throws {
@@ -58,6 +60,7 @@ public struct NoteContent: Codable {
         attachments = try container.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
         hashtags = try container.decodeIfPresent([String].self, forKey: .hashtags) ?? []
         noteLinks = try container.decodeIfPresent([NoteLink].self, forKey: .noteLinks) ?? []
+        htmlContent = try container.decodeIfPresent(String.self, forKey: .htmlContent)
     }
 }
 

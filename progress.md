@@ -1,36 +1,28 @@
 # Goal-12: Progress Log
 
-## Session: 2026-01-20
+## Session: 2026-01-20 (continued)
 
-### Implementation Complete
-Built working SwiftUI search app with:
+### Completed Today
+1. **Unified Streaming Search** - All search engines run in parallel
+2. **Source Badges** - Show which search found each result
+3. **Keyboard Navigation** - ↑/↓ arrows, Enter, Escape
+4. **Auto-scroll** - List scrolls to keep selection visible
+5. **Build Instructions** - Added `.claude/rules/build.md`
 
-**Files Created:**
-- `Sources/NotesSearch/NotesSearchApp.swift` - App entry point
-- `Sources/NotesSearch/SearchViewModel.swift` - Business logic
-- `Sources/NotesSearch/ContentView.swift` - All views
+### Now Working On
+**Rich Text Preview** - Render notes with proper formatting (titles, headings, code blocks)
 
-**Features:**
-- Search bar with debounced input
-- Three search modes: Basic, Full-Text (FTS), Semantic (AI)
-- Results list with title, folder, date, score
-- Note preview with content and metadata
-- "Open in Notes.app" button
-- Copy content/ID actions
-- Full Disk Access permission handling
-- Dark mode support (automatic)
-
-**Build:**
-```bash
-swift build
-.build/debug/notes-search
-```
+### Investigation Findings
+- Protobuf stores `attribute_run` (field 5) with style info
+- Style types: 0=body, 1=title, 2=heading, 3=subheading, 4=monospaced
+- Need to enhance NoteDecoder to extract these
+- Will convert to HTML and render with WKWebView
 
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 1-3 complete, Phase 4 polish |
-| Where am I going? | Add keyboard navigation, then M10 |
-| What's the goal? | Visual search with real-time results |
-| What have I learned? | SwiftUI NavigationSplitView works well |
-| What have I done? | Built working search app |
+| Where am I? | Phase 5: Rich Text Preview |
+| Where am I going? | Styled note preview matching Notes.app |
+| What's the goal? | Visual search with formatted note preview |
+| What have I learned? | Protobuf has style info in attribute_run |
+| What have I done? | Keyboard nav, unified search, investigating rich text |
