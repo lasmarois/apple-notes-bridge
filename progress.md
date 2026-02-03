@@ -223,11 +223,35 @@ Title (⇧⌘T) DOES save style_type=0 to the database! Body is when the field i
 
 ---
 
+## Session 5: Fix Markdown Export
+
+### Issue
+Markdown export was not using the real paragraph styles - it was falling back to a single body run.
+
+### Root Cause
+`NotesExporter.getStyledContent()` was calling `database.getStyledContent()` which:
+1. Had wrong Z_ENT filter (7 instead of 12 for notes)
+2. Had parameter binding issues with sqlite3_bind_text
+
+### Fix
+- Added `Database.getStyledContent(forNoteId:)` public method
+- Fixed SQL query to use string interpolation for the ID
+- Removed incorrect Z_ENT=7 filter
+- Export now correctly decodes all 63 attribute runs with proper styles
+
+### Verification
+Debug log showed:
+- 63 runs decoded
+- Run 0: style=title (first line)
+- Runs 43-48: style=title (the ⇧⌘T styled line)
+
+---
+
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Goal-15 COMPLETE - major discovery made |
-| Where am I going? | Commit the fix, archive Goal-15 |
-| What's the goal? | Fix Title/Heading detection (DONE!) |
-| What have I learned? | style_type=0 means Title, absence means Body |
-| What have I done? | Fixed Decoder + Encoder, all tests pass |
+| Where am I? | Goal-15 FULLY COMPLETE |
+| Where am I going? | Commit and archive Goal-15 |
+| What's the goal? | Fix Title/Heading detection + export (DONE!) |
+| What have I learned? | style_type=0=Title, absent=Body; export needed real styled content |
+| What have I done? | Fixed Decoder, Encoder, Database, Exporter - all working |

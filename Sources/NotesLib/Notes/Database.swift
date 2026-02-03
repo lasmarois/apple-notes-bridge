@@ -686,6 +686,56 @@ public class NotesDatabase {
         return nil
     }
 
+    /// Get styled content (with attribute runs) for a note by its ID
+    /// This decodes the protobuf and returns the full styled content including paragraph styles
+    public func getStyledContent(forNoteId id: String) throws -> StyledNoteContent? {
+        // First get the Z_PK for this note
+        let pkQuery = "SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT WHERE ZIDENTIFIER = '\(id)'"
+
+        var pkStatement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, pkQuery, -1, &pkStatement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(pkStatement) }
+
+        guard sqlite3_step(pkStatement) == SQLITE_ROW else {
+            return nil
+        }
+        let pk = sqlite3_column_int64(pkStatement, 0)
+
+        // Now get the ZDATA
+        let contentQuery = "SELECT ZDATA FROM ZICNOTEDATA WHERE ZNOTE = ?"
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, contentQuery, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_int64(statement, 1, pk)
+
+        if sqlite3_step(statement) == SQLITE_ROW {
+            if let blob = sqlite3_column_blob(statement, 0) {
+                let length = sqlite3_column_bytes(statement, 0)
+                let data = Data(bytes: blob, count: Int(length))
+                var styledContent = try decoder.decodeStyled(data)
+
+                // Fetch tables
+                let tableRefs = decoder.extractTableReferences(from: data)
+                for ref in tableRefs {
+                    if let tableData = try? fetchTableData(uuid: ref.uuid),
+                       let table = decoder.parseCRDTTable(tableData, position: ref.position) {
+                        styledContent.tables.append(table)
+                    }
+                }
+
+                return styledContent
+            }
+        }
+
+        return nil
+    }
+
     // MARK: - Attachment Operations
 
     /// Fetch attachments for a note by its Z_PK
@@ -1185,6 +1235,37 @@ public class NotesDatabase {
     public func listFolders() throws -> [(pk: Int64, name: String)] {
         let foldersWithAccounts = try listFoldersWithAccounts()
         return foldersWithAccounts.map { (pk: $0.pk, name: $0.name) }
+    }
+
+    /// Debug: dump attribute runs for a note
+    public func debugNoteStyles(id: String) throws -> String {
+        try ensureOpen()
+
+        let query = """
+            SELECT d.ZDATA
+            FROM ZICCLOUDSYNCINGOBJECT n
+            JOIN ZICNOTEDATA d ON n.ZNOTEDATA = d.Z_PK
+            WHERE n.ZIDENTIFIER = ?
+            """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            throw NotesError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let blob = sqlite3_column_blob(statement, 0) else {
+            throw NotesError.noteNotFound(id)
+        }
+
+        let length = sqlite3_column_bytes(statement, 0)
+        let data = Data(bytes: blob, count: Int(length))
+
+        return decoder.debugDumpStyles(data)
     }
 
     // MARK: - Private Write Helpers

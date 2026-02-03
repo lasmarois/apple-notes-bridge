@@ -246,13 +246,14 @@ public class NotesExporter {
     }
 
     private func getStyledContent(forNoteId id: String) throws -> StyledNoteContent {
-        // This requires access to the raw note data
-        // For now, return a basic styled content from the note text
+        // Get the full styled content with paragraph styles from the database
+        if let styledContent = try database.getStyledContent(forNoteId: id) {
+            return styledContent
+        }
+
+        // Fallback: return basic styled content if protobuf decoding fails
         let note = try database.readNote(id: id, includeTables: true)
-
-        // Create basic attribute run for the whole text
         let attributeRuns = [AttributeRun(length: note.content.count, styleType: .body)]
-
         return StyledNoteContent(
             text: note.content,
             attributeRuns: attributeRuns,
@@ -279,4 +280,10 @@ public struct ExportFailure {
     public let noteId: String
     public let title: String
     public let error: String
+
+    public init(noteId: String, title: String, error: String) {
+        self.noteId = noteId
+        self.title = title
+        self.error = error
+    }
 }

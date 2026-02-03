@@ -77,6 +77,14 @@ The style information is stored in the CRDT (Conflict-free Replicated Data Type)
 - [x] Tests pass
 - **Result**: Title styling now correctly detected on ANY line
 
+### Phase 9: Fix Markdown Export ✅
+- [x] Discovered export used fallback (1 run, body) instead of real styles
+- [x] Added `Database.getStyledContent(forNoteId:)` method
+- [x] Updated `NotesExporter.getStyledContent()` to use database method
+- [x] Fixed SQL query (removed incorrect Z_ENT filter, fixed parameter binding)
+- [x] Verified export now shows 63 runs with correct Title styles
+- **Result**: Markdown export now correctly outputs `# ` for Title-styled lines
+
 ---
 
 ## Summary
