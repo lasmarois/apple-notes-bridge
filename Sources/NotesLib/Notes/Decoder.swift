@@ -54,10 +54,20 @@ public enum NoteStyleType: Int, Codable {
 public struct AttributeRun: Codable {
     public let length: Int
     public let styleType: NoteStyleType
+    public let fontWeight: Int?      // f5: 1 = bold, 0 = normal
+    public let fontSize: Float?      // f3.f2: font size in points (e.g., 18.0)
+    public let fontName: String?     // f3 as string: font name (e.g., "Skia-Regular")
 
-    public init(length: Int, styleType: NoteStyleType) {
+    public init(length: Int, styleType: NoteStyleType, fontWeight: Int? = nil, fontSize: Float? = nil, fontName: String? = nil) {
         self.length = length
         self.styleType = styleType
+        self.fontWeight = fontWeight
+        self.fontSize = fontSize
+        self.fontName = fontName
+    }
+
+    public var isBold: Bool {
+        return fontWeight == 1
     }
 }
 
@@ -186,12 +196,24 @@ public struct StyledNoteContent {
         <body>
         """
 
-        // Build a map of character offset -> style for the start of each run
+        // Build a map of character offset -> style info for the start of each run
         // Note: CRDT attribute run lengths are in CHARACTERS, not bytes
-        var styleAtCharOffset: [(offset: Int, style: NoteStyleType)] = []
+        struct StyleInfo {
+            let style: NoteStyleType
+            let fontSize: Float?
+            let fontName: String?
+            let isBold: Bool
+        }
+        var styleAtCharOffset: [(offset: Int, info: StyleInfo)] = []
         var currentCharOffset = 0
         for run in attributeRuns {
-            styleAtCharOffset.append((currentCharOffset, run.styleType))
+            let info = StyleInfo(
+                style: run.styleType,
+                fontSize: run.fontSize,
+                fontName: run.fontName,
+                isBold: run.isBold
+            )
+            styleAtCharOffset.append((currentCharOffset, info))
             currentCharOffset += run.length
         }
 
@@ -246,11 +268,17 @@ public struct StyledNoteContent {
             // Count characters in the line
             let lineCharCount = line.count
 
-            // Find the style for this line's starting character position
+            // Find the style info for this line's starting character position
             var lineStyle: NoteStyleType = .body
-            for (offset, style) in styleAtCharOffset.reversed() {
+            var lineFontSize: Float? = nil
+            var lineFontName: String? = nil
+            var lineIsBold: Bool = false
+            for (offset, info) in styleAtCharOffset.reversed() {
                 if offset <= charPosition {
-                    lineStyle = style
+                    lineStyle = info.style
+                    lineFontSize = info.fontSize
+                    lineFontName = info.fontName
+                    lineIsBold = info.isBold
                     break
                 }
             }
@@ -298,29 +326,43 @@ public struct StyledNoteContent {
             if !trimmedLine.isEmpty {
                 let escapedText = escapeHTML(trimmedLine)
 
+                // Build inline style for custom font properties
+                var inlineStyles: [String] = []
+                if let size = lineFontSize {
+                    inlineStyles.append("font-size: \(Int(size))pt")
+                }
+                if let fontName = lineFontName {
+                    inlineStyles.append("font-family: '\(fontName)'")
+                }
+                if lineIsBold {
+                    inlineStyles.append("font-weight: bold")
+                }
+                let styleAttr = inlineStyles.isEmpty ? "" : " style=\"\(inlineStyles.joined(separator: "; "))\""
+
                 switch lineStyle {
                 case .title:
-                    html += "<h1>\(escapedText)</h1>\n"
+                    html += "<h1\(styleAttr)>\(escapedText)</h1>\n"
                 case .heading:
-                    html += "<h2>\(escapedText)</h2>\n"
+                    html += "<h2\(styleAttr)>\(escapedText)</h2>\n"
                 case .subheading:
-                    html += "<h3>\(escapedText)</h3>\n"
+                    html += "<h3\(styleAttr)>\(escapedText)</h3>\n"
                 case .subheading2:
-                    html += "<h4>\(escapedText)</h4>\n"
+                    html += "<h4\(styleAttr)>\(escapedText)</h4>\n"
                 case .monospaced:
                     // Handled above
                     break
                 case .bulletList:
-                    html += "<p>• \(escapedText)</p>\n"
+                    html += "<p\(styleAttr)>• \(escapedText)</p>\n"
                 case .numberedList:
-                    html += "<p>\(numberedListIndex). \(escapedText)</p>\n"
+                    html += "<p\(styleAttr)>\(numberedListIndex). \(escapedText)</p>\n"
                     numberedListIndex += 1
                 case .checkbox:
-                    html += "<p>☐ \(escapedText)</p>\n"
+                    html += "<p\(styleAttr)>☐ \(escapedText)</p>\n"
                 case .checkboxChecked:
-                    html += "<p style=\"text-decoration: line-through; color: \(secondaryColor)\">☑ \(escapedText)</p>\n"
+                    let checkedStyles = inlineStyles + ["text-decoration: line-through", "color: \(secondaryColor)"]
+                    html += "<p style=\"\(checkedStyles.joined(separator: "; "))\">☑ \(escapedText)</p>\n"
                 case .body, .unknown:
-                    html += "<p>\(escapedText)</p>\n"
+                    html += "<p\(styleAttr)>\(escapedText)</p>\n"
                 }
             }
 
@@ -909,6 +951,9 @@ public class NoteDecoder {
         var offset = 0
         var length: Int = 0
         var styleType: NoteStyleType = .body
+        var fontWeight: Int? = nil
+        var fontSize: Float? = nil
+        var fontName: String? = nil
 
         while offset < data.count {
             let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
@@ -922,12 +967,22 @@ public class NoteDecoder {
                 let (styleData, nextOffset) = try readLengthDelimited(from: data, at: offset)
                 styleType = try parseParagraphStyle(styleData)
                 offset = nextOffset
+            } else if fieldNumber == 3 && wireType == 2 { // font info (length-delimited)
+                let (fontData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                let fontInfo = parseFontInfo(fontData)
+                fontSize = fontInfo.size
+                fontName = fontInfo.name
+                offset = nextOffset
+            } else if fieldNumber == 5 && wireType == 0 { // font_weight (varint)
+                let (value, nextOffset) = try readVarint(from: data, at: offset)
+                fontWeight = Int(value)
+                offset = nextOffset
             } else {
                 offset = try skipField(wireType: wireType, from: data, at: offset)
             }
         }
 
-        return AttributeRun(length: length, styleType: styleType)
+        return AttributeRun(length: length, styleType: styleType, fontWeight: fontWeight, fontSize: fontSize, fontName: fontName)
     }
 
     /// Parse attribute run and extract any embedded table reference (field 12)
@@ -936,6 +991,9 @@ public class NoteDecoder {
         var offset = 0
         var length: Int = 0
         var styleType: NoteStyleType = .body
+        var fontWeight: Int? = nil
+        var fontSize: Float? = nil
+        var fontName: String? = nil
         var tableUUID: String?
         var tableType: String?
 
@@ -952,6 +1010,16 @@ public class NoteDecoder {
                     let (styleData, nextOffset) = try readLengthDelimited(from: data, at: offset)
                     styleType = (try? parseParagraphStyle(styleData)) ?? .body
                     offset = nextOffset
+                } else if fieldNumber == 3 && wireType == 2 { // font info
+                    let (fontData, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                    let fontInfo = parseFontInfo(fontData)
+                    fontSize = fontInfo.size
+                    fontName = fontInfo.name
+                    offset = nextOffset
+                } else if fieldNumber == 5 && wireType == 0 { // font_weight
+                    let (value, nextOffset) = try readVarint(from: data, at: offset)
+                    fontWeight = Int(value)
+                    offset = nextOffset
                 } else if fieldNumber == 12 && wireType == 2 { // embedded object reference
                     let (refData, nextOffset) = try readLengthDelimited(from: data, at: offset)
                     if let ref = parseEmbeddedObjectRef(refData) {
@@ -967,13 +1035,59 @@ public class NoteDecoder {
             // Parsing failed, return what we have
         }
 
-        let run = AttributeRun(length: length, styleType: styleType)
+        let run = AttributeRun(length: length, styleType: styleType, fontWeight: fontWeight, fontSize: fontSize, fontName: fontName)
         var tableRef: TableReference? = nil
         if let uuid = tableUUID, let type = tableType, type == "com.apple.notes.table" {
             tableRef = TableReference(uuid: uuid, type: type, position: currentPosition)
         }
 
         return (run, tableRef)
+    }
+
+    /// Parse font info from field 3 of attribute run
+    /// Can contain: f2 = size (float32), f3 = flag, or be a string for font name
+    private func parseFontInfo(_ data: Data) -> (size: Float?, name: String?) {
+        // First check if this is a font name string (starts with \n followed by name)
+        if let str = String(data: data, encoding: .utf8),
+           str.hasPrefix("\n") || str.contains("-") {
+            // Font name string like "\nSkia-Regular"
+            let fontName = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (nil, fontName.isEmpty ? nil : fontName)
+        }
+
+        // Otherwise parse as nested message with size
+        var offset = 0
+        var fontSize: Float? = nil
+
+        do {
+            while offset < data.count {
+                let (fieldNumber, wireType, newOffset) = try readTag(from: data, at: offset)
+                offset = newOffset
+
+                if fieldNumber == 2 && wireType == 5 { // f2 as 32-bit float (wire type 5)
+                    guard offset + 4 <= data.count else { break }
+                    let floatData = data.subdata(in: offset..<offset+4)
+                    fontSize = floatData.withUnsafeBytes { $0.load(as: Float.self) }
+                    offset += 4
+                } else if wireType == 0 { // varint
+                    let (_, nextOffset) = try readVarint(from: data, at: offset)
+                    offset = nextOffset
+                } else if wireType == 2 { // length-delimited
+                    let (_, nextOffset) = try readLengthDelimited(from: data, at: offset)
+                    offset = nextOffset
+                } else if wireType == 5 { // 32-bit
+                    offset += 4
+                } else if wireType == 1 { // 64-bit
+                    offset += 8
+                } else {
+                    break
+                }
+            }
+        } catch {
+            // Ignore parsing errors
+        }
+
+        return (fontSize, nil)
     }
 
     /// Parse embedded object reference (field 12 contents)
