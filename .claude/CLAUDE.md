@@ -1,46 +1,19 @@
 # Claude Notes Bridge
 
-Bridge Claude/LLM to Apple Notes API for reading, updating, and organizing notes.
+A Swift-based MCP server for full Apple Notes integration on macOS.
 
-## Planning Context
+## Planning Authority
 
-@planning/ROADMAP.md
-@planning/GOALS.md
-@task_plan.md
-@progress.md
-@findings.md
-
-## Project Workflow
-
-This project uses the `planning-with-files` skill for goal-based planning.
-
-### Structure
+All planning, design, milestones, goals, specs, and tech decisions live in the **notes-bridge-planning** repo:
 
 ```
-planning/
-├── GOALS.md           # Goals registry (single source of truth)
-├── history/goal-#/    # Completed goals' planning files
-└── iced/goal-#/       # Paused goals' planning files
-
-Root planning files (task_plan.md, progress.md, findings.md) = current goal ONLY
+../notes-bridge-planning/
 ```
 
-### Goals Registry Rules
+Do NOT create planning files (task_plan.md, progress.md, findings.md, GOALS.md, ROADMAP.md) in this repo. All goal work is managed from the planning repo.
 
-- Only ONE goal can be `in_progress` at a time
-- GOALS.md contains the registry table tracking all goals and their status
-- Statuses: `in_progress` | `iced` | `completed`
+## Code Rules
 
-### File Lifecycle
-
-| Action | What happens |
-|--------|--------------|
-| Complete goal | Move planning files + deliverables to `planning/history/goal-#/` |
-| Ice goal | Move planning files + deliverables to `planning/iced/goal-#/` |
-| Resume iced goal | Move files from `planning/iced/goal-#/` back to root |
-
-### Naming Conventions
-
-- Future goal specs: `ISSUE-descr-goal-#.md` (e.g., `ISSUE-add-folder-sync-goal-2.md`)
-- Goal deliverables: `DELIVERABLE-DESCR-GOAL-#.md` (e.g., `DELIVERABLE-API-SPEC-GOAL-1.md`)
-- These files are archived/iced with their associated goal
+Build, test, and development rules live in the planning repo:
+- `../notes-bridge-planning/.claude/rules/code/build.md`
+- `../notes-bridge-planning/.claude/rules/code/testing.md`
