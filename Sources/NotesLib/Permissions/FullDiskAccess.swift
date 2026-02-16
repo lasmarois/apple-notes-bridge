@@ -19,14 +19,14 @@ public enum Permissions {
         ║                    Full Disk Access Required                   ║
         ╠════════════════════════════════════════════════════════════════╣
         ║                                                                ║
-        ║  claude-notes-bridge needs Full Disk Access to read your      ║
+        ║  apple-notes-bridge needs Full Disk Access to read your        ║
         ║  Apple Notes database.                                         ║
         ║                                                                ║
         ║  To grant access:                                              ║
         ║  1. Open System Settings → Privacy & Security → Full Disk Access║
         ║  2. Click the + button                                         ║
         ║  3. Add this application                                       ║
-        ║  4. Restart claude-notes-bridge                                ║
+        ║  4. Restart apple-notes-bridge                                 ║
         ║                                                                ║
         ╚════════════════════════════════════════════════════════════════╝
         """

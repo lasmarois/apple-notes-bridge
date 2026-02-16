@@ -1,4 +1,4 @@
-# Claude Notes Bridge
+# Apple Notes Bridge
 
 A native macOS MCP server that gives Claude full access to your Apple Notes — read, write, search, organize, import, and export.
 
@@ -26,17 +26,17 @@ Built in Swift. Zero runtime dependencies. Works with iCloud sync.
 
 #### Option A: Download (Recommended)
 
-Download the latest `.pkg` installer from [GitHub Releases](https://github.com/lasmarois/claude-notes-bridge/releases/latest).
+Download the latest `.pkg` installer from [GitHub Releases](https://github.com/lasmarois/apple-notes-bridge/releases/latest).
 
-The installer includes both the CLI tool and the Notes Search app. Open the `.pkg` and follow the prompts.
+The installer includes both the CLI tool and the Notes Bridge app. Open the `.pkg` and follow the prompts.
 
 > **Note:** The binary is built for Apple Silicon (ARM64). Intel Macs should build from source.
 
 #### Option B: Build from Source
 
 ```bash
-git clone https://github.com/lasmarois/claude-notes-bridge.git
-cd claude-notes-bridge
+git clone https://github.com/lasmarois/apple-notes-bridge.git
+cd apple-notes-bridge
 swift build -c release
 ```
 
@@ -51,20 +51,26 @@ The bridge reads Apple Notes' SQLite database directly, so it needs Full Disk Ac
 
 ### 3. Add to Claude Code
 
-Create or edit `.mcp.json` in your project directory:
+Run the setup command:
+
+```bash
+apple-notes-bridge setup
+```
+
+Or create/edit `.mcp.json` in your project directory:
 
 ```json
 {
   "mcpServers": {
-    "apple-notes": {
-      "command": "/path/to/claude-notes-bridge",
+    "apple-notes-bridge": {
+      "command": "/path/to/apple-notes-bridge",
       "args": ["serve"]
     }
   }
 }
 ```
 
-Replace `/path/to/claude-notes-bridge` with the actual path to the built binary (e.g., `.build/release/claude-notes-bridge`).
+Replace `/path/to/apple-notes-bridge` with the actual path to the built binary (e.g., `.build/release/apple-notes-bridge`).
 
 That's it. Claude can now read and write your Apple Notes.
 
@@ -105,28 +111,28 @@ That's it. Claude can now read and write your Apple Notes.
 
 ```bash
 # Search notes
-claude-notes-bridge search "meeting notes"
+apple-notes-bridge search "meeting notes"
 
 # List all notes
-claude-notes-bridge list
+apple-notes-bridge list
 
 # Read a specific note
-claude-notes-bridge read <note-id>
+apple-notes-bridge read <note-id>
 
 # List folders
-claude-notes-bridge folders
+apple-notes-bridge folders
 
 # Export a note to Markdown
-claude-notes-bridge export <note-id> --format markdown
+apple-notes-bridge export <note-id> --format markdown
 
 # Import from Markdown
-claude-notes-bridge import notes.md
+apple-notes-bridge import notes.md
 
 # Start MCP server (used by Claude Code)
-claude-notes-bridge serve
+apple-notes-bridge serve
 ```
 
-Run `claude-notes-bridge --help` for all options.
+Run `apple-notes-bridge --help` for all options.
 
 ## Search UI
 
@@ -137,16 +143,16 @@ A standalone SwiftUI app for visual note searching with real-time results.
 ### Build & Run
 
 ```bash
-swift build --product notes-search
+swift build --product notes-bridge
 
 # Create signed app bundle (required for Full Disk Access)
-mkdir -p .build/NotesSearch.app/Contents/MacOS
-cp .build/debug/notes-search .build/NotesSearch.app/Contents/MacOS/NotesSearch
-codesign --force --deep --sign - .build/NotesSearch.app
-open .build/NotesSearch.app
+mkdir -p ".build/Notes Bridge.app/Contents/MacOS"
+cp .build/debug/notes-bridge ".build/Notes Bridge.app/Contents/MacOS/NotesBridge"
+codesign --force --deep --sign - ".build/Notes Bridge.app"
+open ".build/Notes Bridge.app"
 ```
 
-> **Note:** You'll need to add `NotesSearch.app` to **Full Disk Access** in System Settings before it can read your notes.
+> **Note:** You'll need to add `Notes Bridge.app` to **Full Disk Access** in System Settings before it can read your notes.
 
 - **Real-time search** — FTS and semantic search as you type
 - **Rich preview** — Formatted text, tables, attachments
@@ -155,13 +161,13 @@ open .build/NotesSearch.app
 
 ## How It Works
 
-Claude Notes Bridge uses a hybrid architecture for reliability:
+Apple Notes Bridge uses a hybrid architecture for reliability:
 
 - **Reads** go directly to the SQLite database (~5ms per note) for speed
 - **Writes** go through AppleScript (~300ms) to keep iCloud sync intact
 
 ```
-Claude Code ──stdio──► claude-notes-bridge
+Claude Code ──stdio──► apple-notes-bridge
                            │
                            ├── SQLite ──► NoteStore.sqlite (reads)
                            └── AppleScript ──► Notes.app (writes → iCloud)
@@ -180,8 +186,8 @@ Direct database reads are fast and don't disturb Notes.app. AppleScript writes e
 Contributions are welcome! Please open an issue to discuss your idea before submitting a pull request.
 
 ```bash
-git clone https://github.com/lasmarois/claude-notes-bridge.git
-cd claude-notes-bridge
+git clone https://github.com/lasmarois/apple-notes-bridge.git
+cd apple-notes-bridge
 swift build
 swift test
 ```

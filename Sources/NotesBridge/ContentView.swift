@@ -1143,7 +1143,7 @@ struct PermissionView: View {
                 .font(.title)
                 .fontWeight(.semibold)
 
-            Text("Notes Search needs Full Disk Access to read your Apple Notes database.")
+            Text("Notes Bridge needs Full Disk Access to read your Apple Notes database.")
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
 
@@ -1152,7 +1152,7 @@ struct PermissionView: View {
                     .fontWeight(.medium)
                 Text("1. Open System Settings")
                 Text("2. Go to Privacy & Security > Full Disk Access")
-                Text("3. Click '+' and add Notes Search")
+                Text("3. Click '+' and add Notes Bridge")
                 Text("4. Restart the app")
             }
             .font(.callout)

@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "claude-notes-bridge",
+    name: "apple-notes-bridge",
     platforms: [
         .macOS(.v13)  // Required for Core ML semantic search
     ],
     products: [
-        .executable(name: "claude-notes-bridge", targets: ["claude-notes-bridge"]),
-        .executable(name: "notes-search", targets: ["NotesSearch"]),
+        .executable(name: "apple-notes-bridge", targets: ["apple-notes-bridge"]),
+        .executable(name: "notes-bridge", targets: ["NotesBridge"]),
         .executable(name: "benchmark", targets: ["Benchmark"]),
         .library(name: "NotesLib", targets: ["NotesLib"])
     ],
@@ -37,18 +37,18 @@ let package = Package(
         ),
         // Executable that uses the library
         .executableTarget(
-            name: "claude-notes-bridge",
+            name: "apple-notes-bridge",
             dependencies: [
                 "NotesLib",
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ],
-            path: "Sources/claude-notes-bridge"
+            path: "Sources/apple-notes-bridge"
         ),
         // SwiftUI Search App
         .executableTarget(
-            name: "NotesSearch",
+            name: "NotesBridge",
             dependencies: ["NotesLib"],
-            path: "Sources/NotesSearch"
+            path: "Sources/NotesBridge"
         ),
         // Benchmark tool
         .executableTarget(

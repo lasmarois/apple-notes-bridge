@@ -9,7 +9,7 @@ private class BundleFinder {}
 
 extension Foundation.Bundle {
     static let notesLibBundle: Bundle = {
-        let bundleName = "claude-notes-bridge_NotesLib"
+        let bundleName = "apple-notes-bridge_NotesLib"
 
         let candidates: [URL?] = [
             // Standard macOS .app bundle location
