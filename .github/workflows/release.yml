@@ -20,8 +20,8 @@ jobs:
       - name: Test
         run: swift test --filter "EncoderDecoderTests|PermissionsTests|MarkdownConverterTests|BertTokenizerTests"
 
-      - name: Build universal release binary
-        run: swift build -c release --arch arm64 --arch x86_64
+      - name: Build release binary
+        run: swift build -c release
 
       - name: Package binary
         run: |
