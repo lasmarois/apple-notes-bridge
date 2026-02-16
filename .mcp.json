@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "apple-notes": {
-      "command": ".build/release/claude-notes-bridge"
+    "apple-notes-bridge": {
+      "command": ".build/release/apple-notes-bridge"
     }
   }
 }

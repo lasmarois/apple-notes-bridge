@@ -2,7 +2,7 @@
 
 # Build directory
 BUILD_DIR = .build/release
-BINARY = claude-notes-bridge
+BINARY = apple-notes-bridge
 
 # Build debug version
 build:

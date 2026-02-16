@@ -12,9 +12,9 @@ public class SearchIndex {
     public init(notesDB: NotesDatabase) {
         self.notesDB = notesDB
 
-        // Store index in ~/Library/Caches/claude-notes-bridge/
+        // Store index in ~/Library/Caches/apple-notes-bridge/
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("claude-notes-bridge")
+            .appendingPathComponent("apple-notes-bridge")
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         self.indexPath = cacheDir.appendingPathComponent("search_index.db").path
     }

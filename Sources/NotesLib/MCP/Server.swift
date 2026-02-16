@@ -65,7 +65,7 @@ public actor MCPServer {
                 "tools": [:]
             ],
             "serverInfo": [
-                "name": "claude-notes-bridge",
+                "name": "apple-notes-bridge",
                 "version": "0.1.0"
             ]
         ]

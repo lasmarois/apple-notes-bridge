@@ -3,7 +3,7 @@ import AppKit
 import NotesLib
 
 @main
-struct NotesSearchApp: App {
+struct NotesBridgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel = SearchViewModel()
     @StateObject private var exportViewModel = ExportViewModel()

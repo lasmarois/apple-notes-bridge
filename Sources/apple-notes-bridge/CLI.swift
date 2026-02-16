@@ -51,10 +51,10 @@ enum ExitCode: Int32 {
 // MARK: - Root Command
 
 @main
-struct NotesBridge: AsyncParsableCommand {
+struct AppleNotesBridge: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "claude-notes-bridge",
-        abstract: "Apple Notes bridge for Claude/MCP integration",
+        commandName: "apple-notes-bridge",
+        abstract: "Apple Notes bridge for MCP/CLI integration",
         discussion: """
             A tool for reading, searching, and managing Apple Notes.
 
@@ -117,7 +117,7 @@ struct Setup: ParsableCommand {
     )
 
     func run() throws {
-        print(TerminalStyle.title("Claude Notes Bridge — Setup\n"))
+        print(TerminalStyle.title("Apple Notes Bridge — Setup\n"))
 
         // Step 1: Check Full Disk Access
         print("Checking Full Disk Access...")
@@ -136,13 +136,13 @@ struct Setup: ParsableCommand {
         guard let claudePath = findClaudeCLI() else {
             print(TerminalStyle.error("Claude Code CLI not found"))
             print("  Install Claude Code first: https://claude.ai/download")
-            print("  Then re-run: claude-notes-bridge setup")
+            print("  Then re-run: apple-notes-bridge setup")
             throw ExitCode.notFound
         }
         print(TerminalStyle.success("Found: \(claudePath)"))
 
         // Step 3: Determine binary path for MCP config
-        let installedPath = "/usr/local/bin/claude-notes-bridge"
+        let installedPath = "/usr/local/bin/apple-notes-bridge"
         let servePath: String
         if FileManager.default.fileExists(atPath: installedPath) {
             servePath = installedPath
@@ -157,7 +157,7 @@ struct Setup: ParsableCommand {
         print("\nRegistering MCP server...")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: claudePath)
-        process.arguments = ["mcp", "add", "apple-notes", "--scope", "user", "--", servePath, "serve"]
+        process.arguments = ["mcp", "add", "apple-notes-bridge", "--scope", "user", "--", servePath, "serve"]
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -175,13 +175,13 @@ struct Setup: ParsableCommand {
                 print("  \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
             print("\n  Manual setup:")
-            print("  \(claudePath) mcp add apple-notes --scope user -- \(servePath) serve")
+            print("  \(claudePath) mcp add apple-notes-bridge --scope user -- \(servePath) serve")
             throw ExitCode.generalError
         }
 
         // Step 5: Summary
         print("\n\(TerminalStyle.title("Setup complete!"))")
-        print("  The \(TerminalStyle.cyan)apple-notes\(TerminalStyle.reset) MCP server is now available in Claude Code.")
+        print("  The \(TerminalStyle.cyan)apple-notes-bridge\(TerminalStyle.reset) MCP server is now available in Claude Code.")
         if !hasFDA {
             print("\n\(TerminalStyle.warning("Remember to grant Full Disk Access before using."))")
         }

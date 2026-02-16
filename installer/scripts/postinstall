@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Remove quarantine attribute (downloaded from internet)
-xattr -dr com.apple.quarantine /usr/local/bin/claude-notes-bridge 2>/dev/null
-xattr -dr com.apple.quarantine /Applications/NotesSearch.app 2>/dev/null
+xattr -dr com.apple.quarantine /usr/local/bin/apple-notes-bridge 2>/dev/null
+xattr -dr com.apple.quarantine "/Applications/Notes Bridge.app" 2>/dev/null
 
 # --- MCP Auto-Configuration ---
 # postinstall runs as root, so we need to find the actual console user
@@ -13,7 +13,7 @@ if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; then
 fi
 
 if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ] || [ "$CONSOLE_USER" = "loginwindow" ]; then
-    echo "Note: Could not detect console user. Run 'claude-notes-bridge setup' to configure Claude Code."
+    echo "Note: Could not detect console user. Run 'apple-notes-bridge setup' to configure Claude Code."
     exit 0
 fi
 
@@ -35,13 +35,13 @@ done
 
 if [ -n "$CLAUDE_BIN" ]; then
     # Run MCP config as the console user (not root)
-    if sudo -u "$CONSOLE_USER" "$CLAUDE_BIN" mcp add apple-notes --scope user -- /usr/local/bin/claude-notes-bridge serve 2>&1; then
-        echo "MCP server 'apple-notes' registered with Claude Code."
+    if sudo -u "$CONSOLE_USER" "$CLAUDE_BIN" mcp add apple-notes-bridge --scope user -- /usr/local/bin/apple-notes-bridge serve 2>&1; then
+        echo "MCP server 'apple-notes-bridge' registered with Claude Code."
     else
-        echo "Note: Auto-configuration failed. Run 'claude-notes-bridge setup' to configure manually."
+        echo "Note: Auto-configuration failed. Run 'apple-notes-bridge setup' to configure manually."
     fi
 else
-    echo "Note: Claude Code CLI not found. Run 'claude-notes-bridge setup' after installing Claude Code."
+    echo "Note: Claude Code CLI not found. Run 'apple-notes-bridge setup' after installing Claude Code."
 fi
 
 exit 0

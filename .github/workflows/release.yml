@@ -46,47 +46,47 @@ jobs:
           security list-keychains -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | tr -d '"')
 
       - name: Inject version into source
-        run: sed -i '' "s/static let version = \"dev\"/static let version = \"${{ steps.version.outputs.version }}\"/" Sources/claude-notes-bridge/Version.swift
+        run: sed -i '' "s/static let version = \"dev\"/static let version = \"${{ steps.version.outputs.version }}\"/" Sources/apple-notes-bridge/Version.swift
 
       - name: Build release binaries
         run: |
-          swift build -c release --product claude-notes-bridge
-          swift build -c release --product notes-search
+          swift build -c release --product apple-notes-bridge
+          swift build -c release --product notes-bridge
 
       - name: Sign and package CLI zip
         run: |
-          codesign --force --sign "NotesSearch Dev" .build/release/claude-notes-bridge
+          codesign --force --sign "NotesSearch Dev" .build/release/apple-notes-bridge
           cd .build/release
-          zip claude-notes-bridge.zip claude-notes-bridge
+          zip apple-notes-bridge.zip apple-notes-bridge
 
-      - name: Build NotesSearch.app bundle
+      - name: Build Notes Bridge.app bundle
         run: |
-          mkdir -p .build/NotesSearch.app/Contents/MacOS
-          mkdir -p .build/NotesSearch.app/Contents/Resources
-          cp .build/release/notes-search .build/NotesSearch.app/Contents/MacOS/NotesSearch
-          cp -R .build/release/claude-notes-bridge_NotesLib.bundle .build/NotesSearch.app/Contents/Resources/
+          mkdir -p ".build/Notes Bridge.app/Contents/MacOS"
+          mkdir -p ".build/Notes Bridge.app/Contents/Resources"
+          cp .build/release/notes-bridge ".build/Notes Bridge.app/Contents/MacOS/NotesBridge"
+          cp -R .build/release/apple-notes-bridge_NotesLib.bundle ".build/Notes Bridge.app/Contents/Resources/"
 
           # Compile Liquid Glass icon (light/dark/tinted via Icon Composer)
-          xcrun actool Resources/NotesSearch.icon \
-              --compile .build/NotesSearch.app/Contents/Resources \
-              --app-icon NotesSearch \
+          xcrun actool Resources/NotesBridge.icon \
+              --compile ".build/Notes Bridge.app/Contents/Resources" \
+              --app-icon NotesBridge \
               --include-all-app-icons \
               --target-device mac \
               --output-partial-info-plist .build/partial-info.plist \
               --platform macosx \
               --minimum-deployment-target 26.0
 
-          cat > .build/NotesSearch.app/Contents/Info.plist << 'PLIST'
+          cat > ".build/Notes Bridge.app/Contents/Info.plist" << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key>
-              <string>NotesSearch</string>
+              <string>NotesBridge</string>
               <key>CFBundleIdentifier</key>
-              <string>com.lasmarois.notes-search</string>
+              <string>com.lasmarois.apple-notes-bridge.ui</string>
               <key>CFBundleName</key>
-              <string>Notes Search</string>
+              <string>Notes Bridge</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
               <key>CFBundleShortVersionString</key>
@@ -98,13 +98,13 @@ jobs:
               <key>LSUIElement</key>
               <false/>
               <key>CFBundleIconFile</key>
-              <string>NotesSearch</string>
+              <string>NotesBridge</string>
               <key>CFBundleIconName</key>
-              <string>NotesSearch</string>
+              <string>NotesBridge</string>
           </dict>
           </plist>
           PLIST
-          codesign --force --deep --sign "NotesSearch Dev" .build/NotesSearch.app
+          codesign --force --deep --sign "NotesSearch Dev" ".build/Notes Bridge.app"
 
       - name: Build .pkg installer
         run: |
@@ -112,15 +112,15 @@ jobs:
 
           # Prepare payload directories
           mkdir -p .build/pkg-payload-cli/usr/local/bin
-          cp .build/release/claude-notes-bridge .build/pkg-payload-cli/usr/local/bin/
+          cp .build/release/apple-notes-bridge .build/pkg-payload-cli/usr/local/bin/
 
           mkdir -p .build/pkg-payload-ui/Applications
-          cp -R .build/NotesSearch.app .build/pkg-payload-ui/Applications/
+          cp -R ".build/Notes Bridge.app" ".build/pkg-payload-ui/Applications/"
 
           # Build component packages
           pkgbuild \
               --root .build/pkg-payload-cli \
-              --identifier com.lasmarois.claude-notes-bridge.cli \
+              --identifier com.lasmarois.apple-notes-bridge.cli \
               --version "$VERSION" \
               --install-location / \
               --scripts installer/scripts \
@@ -129,7 +129,7 @@ jobs:
           pkgbuild \
               --root .build/pkg-payload-ui \
               --install-location / \
-              --identifier com.lasmarois.claude-notes-bridge.ui \
+              --identifier com.lasmarois.apple-notes-bridge.ui \
               --version "$VERSION" \
               .build/ui-raw.pkg
 
@@ -148,7 +148,7 @@ jobs:
               --distribution .build/distribution.xml \
               --resources installer/resources \
               --package-path .build \
-              .build/claude-notes-bridge.pkg
+              .build/apple-notes-bridge.pkg
 
       - name: Generate changelog
         id: changelog
@@ -168,5 +168,5 @@ jobs:
         with:
           body: ${{ steps.changelog.outputs.changelog }}
           files: |
-            .build/release/claude-notes-bridge.zip
-            .build/claude-notes-bridge.pkg
+            .build/release/apple-notes-bridge.zip
+            .build/apple-notes-bridge.pkg
