@@ -37,7 +37,17 @@ jobs:
       - name: Build NotesSearch.app bundle
         run: |
           mkdir -p .build/NotesSearch.app/Contents/MacOS
+          mkdir -p .build/NotesSearch.app/Contents/Resources
           cp .build/release/notes-search .build/NotesSearch.app/Contents/MacOS/NotesSearch
+
+          # Compile Asset Catalog (light/dark/tinted icon variants)
+          xcrun actool Resources/Assets.xcassets \
+              --compile .build/NotesSearch.app/Contents/Resources \
+              --app-icon AppIcon \
+              --output-partial-info-plist .build/partial-info.plist \
+              --platform macosx \
+              --minimum-deployment-target 13.0
+
           cat > .build/NotesSearch.app/Contents/Info.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -59,6 +69,10 @@ jobs:
               <true/>
               <key>LSUIElement</key>
               <false/>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>CFBundleIconName</key>
+              <string>AppIcon</string>
           </dict>
           </plist>
           PLIST
