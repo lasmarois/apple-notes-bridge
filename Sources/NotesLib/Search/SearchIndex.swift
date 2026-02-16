@@ -102,17 +102,22 @@ public class SearchIndex {
     }
 
     /// Build or rebuild the full-text search index
-    /// - Parameter progress: Optional callback for progress updates
+    /// - Parameters:
+    ///   - progress: Optional callback for progress updates
+    ///   - database: Optional database to use (for thread-safe background rebuilding)
     /// - Returns: Number of notes indexed
     @discardableResult
-    public func buildIndex(progress: ((Int, Int) -> Void)? = nil) throws -> Int {
+    public func buildIndex(progress: ((Int, Int) -> Void)? = nil, database: NotesDatabase? = nil) throws -> Int {
         try open()
+
+        // Use provided database or default to stored one
+        let db_to_use = database ?? notesDB
 
         // Clear existing index
         sqlite3_exec(db, "DELETE FROM notes_fts", nil, nil, nil)
 
         // Get all notes from the database
-        let notes = try notesDB.listNotes(limit: 100000)
+        let notes = try db_to_use.listNotes(limit: 100000)
         let total = notes.count
         var indexed = 0
 
@@ -132,7 +137,7 @@ public class SearchIndex {
         for note in notes {
             // Get full note content
             var content = ""
-            if let noteContent = try? notesDB.readNote(id: note.id, includeTables: false) {
+            if let noteContent = try? db_to_use.readNote(id: note.id, includeTables: false) {
                 content = noteContent.content
             }
 
@@ -288,7 +293,10 @@ public class SearchIndex {
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             defer { self?.isRebuilding = false }
-            _ = try? self?.buildIndex()
+            // Create a fresh database connection for thread safety
+            // SQLite connections are not thread-safe
+            let backgroundDB = NotesDatabase()
+            _ = try? self?.buildIndex(database: backgroundDB)
         }
     }
 
