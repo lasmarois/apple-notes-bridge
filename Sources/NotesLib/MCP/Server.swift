@@ -500,8 +500,33 @@ public actor MCPServer {
                     throw NotesError.missingParameter("body")
                 }
                 let folder = arguments["folder"] as? String
+                // Strip title from body if the client included it as the first line
+                // (AppleScript.createNote prepends a styled title, so duplicates otherwise)
+                var cleanBody = body
+                let lines = body.components(separatedBy: "\n")
+                if let firstNonEmpty = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+                    let firstLine = lines[firstNonEmpty].trimmingCharacters(in: .whitespaces)
+                    let matchesTitle: Bool
+                    if firstLine.hasPrefix("# ") {
+                        matchesTitle = String(firstLine.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+                            .lowercased() == title.lowercased()
+                    } else {
+                        matchesTitle = firstLine.lowercased() == title.lowercased()
+                    }
+                    if matchesTitle {
+                        var startIndex = firstNonEmpty + 1
+                        // Skip blank lines after the title
+                        while startIndex < lines.count &&
+                              lines[startIndex].trimmingCharacters(in: .whitespaces).isEmpty {
+                            startIndex += 1
+                        }
+                        cleanBody = startIndex < lines.count
+                            ? lines[startIndex...].joined(separator: "\n")
+                            : ""
+                    }
+                }
                 // Use AppleScript for reliable CloudKit-compatible creation with markdown→HTML conversion
-                let noteResult = try notesAS.createNote(title: title, body: body, folder: folder)
+                let noteResult = try notesAS.createNote(title: title, body: cleanBody, folder: folder)
 
                 // Resolve the x-coredata ID to a UUID so callers can use it with read_note
                 var noteId: String = noteResult.id
